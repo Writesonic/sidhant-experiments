@@ -23,6 +23,7 @@ create_zoom_follow_effect(
     face_side: str,             # "left" or "right" - where face lands on screen
     overlay_config: dict|None,  # Overlay config (None = no overlay)
     text_config: dict|None,     # Deprecated alias for overlay_config
+    fade_mode: str,             # "band" or "average" - edge fade strategy
 )
 ```
 
@@ -34,6 +35,7 @@ create_zoom_follow_effect(
 | `t_start` | float | 0+ | 0 | Seconds into video. Animation eases in via smoothstep |
 | `t_end` | float | >t_start | 5 | Must be > t_start. Duration = t_end - t_start |
 | `face_side` | str | "left"/"right" | "right" | Where the face is positioned after zoom |
+| `fade_mode` | str | "band"/"average" | "band" | Edge fade strategy. "band" = per-row edge color (preserves vertical color variation). "average" = single flat average color. Can also be set via `overlay_config["fade_mode"]` (takes precedence). |
 
 ### overlay_config Dictionary
 
@@ -193,7 +195,7 @@ The pipeline processes each frame in this order:
 1. Calculate zoom geometry from smoothed face tracking data
 2. Warp the raw video frame (affine transform)
 3. Compute screen-space face coordinates from the warp matrix
-4. Apply edge-fade background effect
+4. Apply edge-fade background effect (band mode: per-row color, or average mode: flat color)
 5. Composite overlay LAST onto the warped frame (keeps overlay crisp and unwarped)
 
 Overlays are always drawn post-warp in screen space. Never pre-warp.

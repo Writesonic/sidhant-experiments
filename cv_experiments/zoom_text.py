@@ -202,6 +202,7 @@ def create_zoom_follow_effect(
     face_side="right",
     overlay_config=None,
     text_config=None,  # Deprecated alias for overlay_config
+    fade_mode="band",  # "band" (per-row edge color) or "average" (flat average)
 ):
     # Backward compat: text_config is treated as overlay_config if overlay_config not given
     if overlay_config is None and text_config is not None:
@@ -310,6 +311,9 @@ def create_zoom_follow_effect(
 
         return result
 
+    # -- C. CACHED BAND STATE --
+    cached_band = [None]  # [fade_bg or None] — computed once, reused every frame
+
     # -- C. THE FRAME PROCESSOR --
     def process_frame(get_frame, t):
         frame = get_frame(t)  # Clean, raw frame
@@ -358,13 +362,34 @@ def create_zoom_follow_effect(
         screen_fh = raw_fh * current_zoom
 
         # --- STEP 4: APPLY EDGE FADE (Background Effect) ---
-        edge_strip = int(w * 0.05)
-        if face_side == "right":
-            avg_color = warped_frame[:, :edge_strip].mean(axis=(0, 1))
-        else:
-            avg_color = warped_frame[:, w - edge_strip:].mean(axis=(0, 1))
-
+        current_fade_mode = overlay_config.get('fade_mode', fade_mode) if overlay_config else fade_mode
+        edge_strip = int(w * 0.01)  # Slim 1% strip — just the edge column
         fade_width = int(w * 0.35)
+
+        if current_fade_mode == 'average':
+            # Original behavior: single flat average color
+            if face_side == "right":
+                avg_color = warped_frame[:, :edge_strip].mean(axis=(0, 1))
+            else:
+                avg_color = warped_frame[:, w - edge_strip:].mean(axis=(0, 1))
+            fade_bg = np.full_like(warped_frame, avg_color, dtype=np.float32)
+        else:
+            # Band mode: per-row edge color, cached after first full-zoom frame
+            if cached_band[0] is not None:
+                fade_bg = cached_band[0]
+            else:
+                if face_side == "right":
+                    edge_band = warped_frame[:, :max(edge_strip, 1)].mean(axis=1)  # (h, 3)
+                else:
+                    edge_band = warped_frame[:, w - max(edge_strip, 1):].mean(axis=1)  # (h, 3)
+                # Gaussian blur vertically to smooth horizontal banding
+                blur_k = max(h // 4, 1) | 1  # Odd kernel, ~25% of height
+                edge_band = cv2.GaussianBlur(edge_band.reshape(h, 1, 3), (blur_k, 1), 0).reshape(h, 3)
+                fade_bg = np.broadcast_to(edge_band[:, np.newaxis, :], warped_frame.shape).copy().astype(np.float32)
+                # Cache once zoom animation is complete (p == 1)
+                if p >= 1.0:
+                    cached_band[0] = fade_bg
+
         ramp = np.linspace(0, 1, fade_width).astype(np.float32)
         gradient = np.ones((h, w), dtype=np.float32)
 
@@ -374,7 +399,6 @@ def create_zoom_follow_effect(
             gradient[:, w - fade_width:] = ramp[::-1][np.newaxis, :]
 
         fade_alpha = ((1 - p) + p * gradient)[:, :, np.newaxis]
-        fade_bg = np.full_like(warped_frame, avg_color, dtype=np.float32)
 
         # Apply fade to the warped frame
         final_bg = (warped_frame.astype(np.float32) * fade_alpha +
@@ -406,18 +430,38 @@ def create_zoom_follow_effect(
 
 ts = int(time.time())
 
+# Test band mode (new default) — per-row edge color
 create_zoom_follow_effect(
-    input_path="vid.mp4",
-    output_path=f"output_right_{ts}.mp4",
-    zoom_max=1.1,
+    input_path="longvid.mp4",
+    output_path=f"longvid_band_{ts}.mp4",
+    zoom_max=1.15,
     t_start=1.0,
-    t_end=9.0,
+    t_end=10.0,
     face_side="right",
-    text_config={
-        "content": "Hello this is for Bansi!",
+    overlay_config={
+        "content": "Band Mode",
         "position": "left",
         "color": "yellow",
-        "t_start": 7.0,
-        "t_end": 10.0,
-    }
+        "t_start": 3.0,
+        "t_end": 12.0,
+    },
+    fade_mode="band",
+)
+
+# Test average mode (old behavior) — flat average color
+create_zoom_follow_effect(
+    input_path="longvid.mp4",
+    output_path=f"longvid_average_{ts}.mp4",
+    zoom_max=1.15,
+    t_start=1.0,
+    t_end=10.0,
+    face_side="right",
+    overlay_config={
+        "content": "Average Mode",
+        "position": "left",
+        "color": "yellow",
+        "t_start": 3.0,
+        "t_end": 12.0,
+    },
+    fade_mode="average",
 )
