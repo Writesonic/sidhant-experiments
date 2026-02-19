@@ -10,11 +10,15 @@ per-row edge-fade → overlay composite → FFmpeg encode.
 
 import os
 import queue
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
+cv2.setNumThreads(1)
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import vision, BaseOptions
@@ -343,13 +347,7 @@ def apply_whip(buf_warped, rgb, M, w, h, strength, direction):
     else:
         kernel[ksize // 2, :] = 1.0 / ksize
     blurred = cv2.filter2D(buf_warped, -1, kernel)
-
-    # Blend: original → blurred by strength
-    orig_f = buf_warped.astype(np.float32)
-    blur_f = blurred.astype(np.float32)
-    result = orig_f + (blur_f - orig_f) * strength
-    np.clip(result, 0, 255, out=result)
-    np.copyto(buf_warped, result.astype(np.uint8))
+    cv2.addWeighted(buf_warped, 1.0 - strength, blurred, strength, 0, dst=buf_warped)
 
 
 # ─── Encoder detection ───────────────────────────────────────────────────────
@@ -380,16 +378,31 @@ def _probe_encoder(name):
         return False
 
 
-def detect_best_encoder():
-    if not hasattr(detect_best_encoder, "_c"):
-        for e in ["h264_nvenc", "h264_videotoolbox", "h264_qsv", "libx264"]:
-            if _probe_encoder(e):
-                detect_best_encoder._c = e
+_ENCODER_CANDIDATES = {
+    "h264": ["h264_nvenc", "h264_videotoolbox", "h264_qsv", "libx264"],
+    "hevc": ["hevc_nvenc", "hevc_videotoolbox", "hevc_qsv", "libx265"],
+    "av1": ["av1_nvenc", "av1_videotoolbox", "av1_qsv", "libsvtav1", "libaom-av1"],
+    "vp9": ["libvpx-vp9"],
+}
+
+# Cache: codec_name → best encoder
+_encoder_cache = {}
+
+
+def detect_best_encoder(codec="h264"):
+    if codec not in _encoder_cache:
+        candidates = _ENCODER_CANDIDATES.get(codec, [f"lib{codec}"])
+        # Probe all candidates in parallel — first (by priority) that succeeds wins
+        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+            results = list(pool.map(_probe_encoder, candidates))
+        best = None
+        for e, ok in zip(candidates, results):
+            if ok:
+                best = e
                 break
-        else:
-            detect_best_encoder._c = "libx264"
-        print(f"   Encoder: {detect_best_encoder._c}")
-    return detect_best_encoder._c
+        _encoder_cache[codec] = best or (candidates[-1] if candidates else f"lib{codec}")
+        print(f"   Encoder ({codec}): {_encoder_cache[codec]}")
+    return _encoder_cache[codec]
 
 
 # ─── Overlay ─────────────────────────────────────────────────────────────────
@@ -534,18 +547,33 @@ def _compute_active_frame_ranges(bounces, fps, n_frames, padding_sec=2.0):
     """
     Return sorted list of (start_frame, end_frame) ranges where face detection
     is needed.  Only bounce/in/out events use face data; zoom_blur and whip
-    do not.  Returns None if no face-dependent events exist.
+    do not.  Paired in→out events are merged into a single range that covers
+    the hold region between them.  Returns None if no face-dependent events
+    exist.
     """
+    # First pass: pair in/out events and collect time ranges
     raw_ranges = []
+    pending_in = None
     for b in bounces:
         if isinstance(b, dict):
             action = b.get("action", "bounce")
             if action in ("zoom_blur", "whip"):
                 continue
+            if action == "in":
+                pending_in = b["start"]
+                continue
+            if action == "out" and pending_in is not None:
+                # Merge entire in→hold→out span into one range
+                raw_ranges.append((pending_in, b["end"]))
+                pending_in = None
+                continue
             start_sec, end_sec = b["start"], b["end"]
         else:
             start_sec, end_sec = b[0], b[1]
         raw_ranges.append((start_sec, end_sec))
+    # Dangling "in" with no "out" — extend to end of video
+    if pending_in is not None:
+        raw_ranges.append((pending_in, n_frames / fps))
 
     if not raw_ranges:
         return None
@@ -569,6 +597,51 @@ def _compute_active_frame_ranges(bounces, fps, n_frames, padding_sec=2.0):
     return merged
 
 
+def _compute_render_ranges(bounces, fps, n_frames):
+    """
+    Return sorted list of (start_frame, end_frame) ranges where any effect
+    (bounce, in, out, zoom_blur, whip) is active.  No padding — exact event
+    boundaries only.  Returns None if no events exist.
+    """
+    raw_ranges = []
+    pending_in = None
+    for b in bounces:
+        if isinstance(b, dict):
+            action = b.get("action", "bounce")
+            if action == "in":
+                pending_in = b["start"]
+                continue
+            if action == "out" and pending_in is not None:
+                raw_ranges.append((pending_in, b["end"]))
+                pending_in = None
+                continue
+            start_sec, end_sec = b["start"], b["end"]
+        else:
+            start_sec, end_sec = b[0], b[1]
+        raw_ranges.append((start_sec, end_sec))
+    if pending_in is not None:
+        raw_ranges.append((pending_in, n_frames / fps))
+
+    if not raw_ranges:
+        return None
+
+    frame_ranges = []
+    for start_sec, end_sec in raw_ranges:
+        f_start = max(0, int(start_sec * fps))
+        f_end = min(n_frames - 1, int(end_sec * fps) + 1)
+        frame_ranges.append((f_start, f_end))
+
+    frame_ranges.sort()
+    merged = [frame_ranges[0]]
+    for s, e in frame_ranges[1:]:
+        if s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+
+    return merged
+
+
 def _frame_in_ranges(idx, ranges):
     """Check if frame index falls within any sorted range (early exit)."""
     for s, e in ranges:
@@ -579,10 +652,12 @@ def _frame_in_ranges(idx, ranges):
     return False
 
 
-# ─── Face detection ──────────────────────────────────────────────────────────
-
-
-def get_face_data(video_path, active_ranges=None):
+def get_face_data_seek(video_path, active_ranges, n_frames, stride=3):
+    """
+    Seek-based face detection: only decode + detect frames within active_ranges.
+    Runs inference every `stride` frames and interpolates the rest with np.interp.
+    Frames outside ranges get the last detected position (or default center).
+    """
     opts = vision.FaceLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
@@ -595,36 +670,156 @@ def get_face_data(video_path, active_ranges=None):
     cap = cv2.VideoCapture(video_path)
     w, h = int(cap.get(3)), int(cap.get(4))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    data, idx, default = [], 0, (w // 2, h // 2, 100, 100)
+    default = (w // 2, h // 2, 100, 100)
+    data = [default] * n_frames
     last_detected = default
+    total_read = sum(e - s + 1 for s, e in active_ranges)
+    total_infer = sum((e - s) // stride + 1 for s, e in active_ranges)
+    done_infer = 0
+
+    for ri, (rng_start, rng_end) in enumerate(active_ranges):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, rng_start)
+        # Collect keypoints at stride intervals, read (but skip) in between
+        key_indices = []  # frame indices where we ran inference
+        key_vals = []     # (cx, cy, fw, fh) at those indices
+        for idx in range(rng_start, rng_end + 1):
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            run_detect = (idx - rng_start) % stride == 0 or idx == rng_end
+            if run_detect:
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                ts_ms = int(idx * 1000 / fps)
+                res = lm.detect_for_video(
+                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb),
+                    ts_ms,
+                )
+                if res.face_landmarks:
+                    f = res.face_landmarks[0]
+                    detected = (
+                        int(f[4].x * w),
+                        int(f[4].y * h),
+                        int(abs(f[454].x - f[234].x) * w),
+                        int(abs(f[152].y - f[10].y) * h),
+                    )
+                    last_detected = detected
+                key_indices.append(idx)
+                key_vals.append(last_detected)
+                done_infer += 1
+                if done_infer % 50 == 0:
+                    print(f"   detect {done_infer}/{total_infer} (range {ri+1}/{len(active_ranges)}, frame {idx})", flush=True)
+
+        # Interpolate skipped frames within this range
+        if len(key_indices) >= 2:
+            ki = np.array(key_indices, dtype=np.float64)
+            kv = np.array(key_vals, dtype=np.float64)  # (N, 4)
+            all_idx = np.arange(rng_start, rng_end + 1, dtype=np.float64)
+            interped = np.column_stack([
+                np.interp(all_idx, ki, kv[:, c]) for c in range(4)
+            ]).astype(int)
+            for j, idx in enumerate(range(rng_start, rng_end + 1)):
+                data[idx] = tuple(interped[j])
+        elif len(key_indices) == 1:
+            data[key_indices[0]] = key_vals[0]
+
+        # Fill frames between this range end and next range start
+        next_fill_end = n_frames
+        for ns, _ in active_ranges:
+            if ns > rng_end:
+                next_fill_end = ns
+                break
+        for fill_idx in range(rng_end + 1, next_fill_end):
+            data[fill_idx] = last_detected
+
+    cap.release()
+    lm.close()
+    print(f"   Inference: {done_infer} frames (stride={stride}, {total_read} read)")
+    return data, fps, (w, h)
+
+
+# ─── Face detection ──────────────────────────────────────────────────────────
+
+
+def get_face_data(video_path, active_ranges=None, stride=3):
+    opts = vision.FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=MODEL_PATH),
+        running_mode=vision.RunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    lm = vision.FaceLandmarker.create_from_options(opts)
+    cap = cv2.VideoCapture(video_path)
+    w, h = int(cap.get(3)), int(cap.get(4))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    default = (w // 2, h // 2, 100, 100)
+    last_detected = default
+    n_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # First pass: detect at stride intervals, collect keypoints
+    key_indices = []
+    key_vals = []
+    idx = 0
+    n_infer = 0
     while True:
         ok, bgr = cap.read()
         if not ok:
             break
-        if active_ranges is not None and not _frame_in_ranges(idx, active_ranges):
-            # Skip detection — carry forward last known position
-            data.append(last_detected)
-            idx += 1
-            continue
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        res = lm.detect_for_video(
-            mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), int(idx * 1000 / fps)
-        )
-        idx += 1
-        if res.face_landmarks:
-            f = res.face_landmarks[0]
-            detected = (
-                int(f[4].x * w),
-                int(f[4].y * h),
-                int(abs(f[454].x - f[234].x) * w),
-                int(abs(f[152].y - f[10].y) * h),
+        skip_range = active_ranges is not None and not _frame_in_ranges(idx, active_ranges)
+        run_detect = not skip_range and (idx % stride == 0)
+        if run_detect:
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            res = lm.detect_for_video(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), int(idx * 1000 / fps)
             )
-            data.append(detected)
-            last_detected = detected
+            if res.face_landmarks:
+                f = res.face_landmarks[0]
+                last_detected = (
+                    int(f[4].x * w),
+                    int(f[4].y * h),
+                    int(abs(f[454].x - f[234].x) * w),
+                    int(abs(f[152].y - f[10].y) * h),
+                )
+            key_indices.append(idx)
+            key_vals.append(last_detected)
+            n_infer += 1
+        elif not skip_range:
+            # Non-stride frame inside active range — will be interpolated
+            key_indices.append(idx)
+            key_vals.append(None)  # placeholder
         else:
-            data.append(data[-1] if data else default)
+            # Outside active range — carry forward
+            key_indices.append(idx)
+            key_vals.append(last_detected)
+        idx += 1
+        if idx % 500 == 0:
+            print(f"   detect {idx}/{n_total} ({n_infer} inferred)", flush=True)
     cap.release()
     lm.close()
+
+    # Second pass: interpolate skipped frames
+    n = len(key_indices)
+    if n == 0:
+        return [default] * n_total, fps, (w, h)
+    # Build arrays of detected keypoints for interpolation
+    det_idx = []
+    det_vals = []
+    for i, v in zip(key_indices, key_vals):
+        if v is not None:
+            det_idx.append(i)
+            det_vals.append(v)
+    if not det_idx:
+        return [default] * n_total, fps, (w, h)
+
+    di = np.array(det_idx, dtype=np.float64)
+    dv = np.array(det_vals, dtype=np.float64)
+    all_frames = np.arange(n_total, dtype=np.float64)
+    interped = np.column_stack([
+        np.interp(all_frames, di, dv[:, c]) for c in range(4)
+    ]).astype(int)
+    data = [tuple(row) for row in interped]
+
+    print(f"   Inference: {n_infer}/{n_total} frames (stride={stride})")
     return data, fps, (w, h)
 
 
@@ -672,6 +867,20 @@ def open_ffmpeg_writer(path, w, h, fps, enc):
         cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "20"]
     elif enc == "h264_videotoolbox":
         cmd += ["-q:v", "65"]
+    elif enc == "libx265":
+        cmd += ["-preset", "fast", "-crf", "22"]
+    elif enc == "hevc_videotoolbox":
+        cmd += ["-q:v", "65"]
+    elif enc == "hevc_nvenc":
+        cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "22"]
+    elif enc == "libsvtav1":
+        cmd += ["-preset", "6", "-crf", "28"]
+    elif enc == "libaom-av1":
+        cmd += ["-cpu-used", "6", "-crf", "28"]
+    elif enc == "av1_videotoolbox":
+        cmd += ["-q:v", "65"]
+    elif enc == "av1_nvenc":
+        cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "28"]
     cmd.append(path)
     return subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -733,6 +942,474 @@ def mux_audio(src, silent, out):
     )
     if not has_audio:
         print("   (source has no audio track — skipped)")
+
+
+# ─── Segment pipeline ────────────────────────────────────────────────────────
+
+
+def _probe_source_codec(video_path):
+    """Return the video codec name of the source file (e.g. 'h264')."""
+    r = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name", "-of", "csv=p=0",
+            video_path,
+        ],
+        capture_output=True, text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _extract_passthrough(input_path, output_path, t_start, t_end, enc):
+    """Frame-accurate passthrough extraction via decode+encode.
+
+    Stream-copy (-c copy) can only cut at keyframes, causing duplicate/missing
+    frames at segment boundaries.  We accept the re-encode cost for frame
+    accuracy — passthrough segments have no warp/effects so FFmpeg encode is fast.
+    """
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(t_start), "-to", str(t_end),
+        "-i", input_path, "-c:v", enc, "-pix_fmt", "yuv420p",
+        "-an", output_path,
+    ]
+    if "libx264" in enc:
+        cmd[-2:-2] = ["-preset", "fast", "-crf", "18"]
+    elif "libsvtav1" in enc:
+        cmd[-2:-2] = ["-preset", "6", "-crf", "28"]
+    elif "videotoolbox" in enc:
+        cmd[-2:-2] = ["-q:v", "65"]
+    elif "nvenc" in enc:
+        cmd[-2:-2] = ["-preset", "p4", "-rc", "vbr", "-cq", "22"]
+    elif "libx265" in enc:
+        cmd[-2:-2] = ["-preset", "fast", "-crf", "20"]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+
+
+def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
+                        face_data_stable, z, face_side, dest_x_full,
+                        fps, w, h, enc):
+    """
+    Render a hold region (constant zoom, slowly drifting face) entirely via
+    FFmpeg crop+scale — no Python frame loop.
+
+    If the face drifts significantly (≥2% of frame width), builds a
+    piecewise-linear interpolation using FFmpeg lerp() expressions sampled
+    every KEY_INTERVAL seconds.  Otherwise uses a single static crop.
+    """
+    KEY_INTERVAL = 5  # seconds between keyframes
+
+    crop_w = int(w / z)
+    crop_h = int(h / z)
+    n = frame_end - frame_start + 1
+
+    # Compute per-frame crop positions from stabilised face data
+    cx_arr = []
+    cy_arr = []
+    for k in range(n):
+        abs_idx = frame_start + k
+        fx_st = float(face_data_stable[abs_idx][0])
+        fy_st = float(face_data_stable[abs_idx][1])
+        cx = fx_st - dest_x_full / z
+        cy = fy_st - (h / 2) / z
+        cx = max(0, min(cx, w - crop_w))
+        cy = max(0, min(cy, h - crop_h))
+        cx_arr.append(cx)
+        cy_arr.append(cy)
+
+    cx_min, cx_max = min(cx_arr), max(cx_arr)
+    cy_min, cy_max = min(cy_arr), max(cy_arr)
+    drift = max(cx_max - cx_min, cy_max - cy_min)
+
+    t_start = frame_start / fps
+    t_end = (frame_end + 1) / fps
+
+    if drift < 0.02 * w:
+        # Static path — drift is negligible, use average position
+        avg_cx = int(sum(cx_arr) / n)
+        avg_cy = int(sum(cy_arr) / n)
+        avg_cx = max(0, min(avg_cx, w - crop_w))
+        avg_cy = max(0, min(avg_cy, h - crop_h))
+        vf = f"crop={crop_w}:{crop_h}:{avg_cx}:{avg_cy},scale={w}:{h}:flags=bilinear"
+    else:
+        # Drifting path — sample keyframes and build piecewise lerp expression
+        key_interval_frames = int(KEY_INTERVAL * fps)
+        keyframe_indices = list(range(0, n, key_interval_frames))
+        if keyframe_indices[-1] != n - 1:
+            keyframe_indices.append(n - 1)
+
+        # Average crop position around each keyframe for stability
+        def _avg_at(idx, arr):
+            half_win = int(fps)  # ±1 second window
+            lo = max(0, idx - half_win)
+            hi = min(n, idx + half_win + 1)
+            return sum(arr[lo:hi]) / (hi - lo)
+
+        kf_cx = [_avg_at(i, cx_arr) for i in keyframe_indices]
+        kf_cy = [_avg_at(i, cy_arr) for i in keyframe_indices]
+        kf_t = [i / fps for i in keyframe_indices]  # time relative to segment start
+
+        # Clamp keyframe positions
+        for i in range(len(kf_cx)):
+            kf_cx[i] = max(0, min(kf_cx[i], w - crop_w))
+            kf_cy[i] = max(0, min(kf_cy[i], h - crop_h))
+
+        def _build_lerp_expr(kf_vals, kf_times):
+            """Build chained if(between(t,...), lerp(...), ...) expression."""
+            if len(kf_vals) == 1:
+                return str(int(kf_vals[0]))
+            # Build from last segment backwards
+            expr = str(int(kf_vals[-1]))
+            for i in range(len(kf_vals) - 2, -1, -1):
+                t0 = kf_times[i]
+                t1 = kf_times[i + 1]
+                v0 = kf_vals[i]
+                v1 = kf_vals[i + 1]
+                seg_dur = t1 - t0
+                if seg_dur <= 0:
+                    continue
+                seg_expr = f"lerp({int(v0)}\\,{int(v1)}\\,(t-{t0:.3f})/{seg_dur:.3f})"
+                expr = f"if(between(t\\,{t0:.3f}\\,{t1:.3f})\\,{seg_expr}\\,{expr})"
+            return expr
+
+        cx_expr = _build_lerp_expr(kf_cx, kf_t)
+        cy_expr = _build_lerp_expr(kf_cy, kf_t)
+        vf = f"crop={crop_w}:{crop_h}:'{cx_expr}':'{cy_expr}',scale={w}:{h}:flags=bilinear"
+
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(t_start), "-to", str(t_end),
+        "-i", input_path, "-vf", vf, "-c:v", enc, "-pix_fmt", "yuv420p",
+        "-an", output_path,
+    ]
+    if "libx264" in enc:
+        cmd[-2:-2] = ["-preset", "fast", "-crf", "18"]
+    elif "libsvtav1" in enc:
+        cmd[-2:-2] = ["-preset", "6", "-crf", "28"]
+    elif "videotoolbox" in enc:
+        cmd[-2:-2] = ["-q:v", "65"]
+    elif "nvenc" in enc:
+        cmd[-2:-2] = ["-preset", "p4", "-rc", "vbr", "-cq", "22"]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+
+
+def _render_active_segment(
+    input_path, output_path, frame_start, frame_end,
+    face_data, face_data_stable, p_curve, zooms,
+    blur_strength, blur_n_samples, whip_strength, whip_direction,
+    times, overlay, overlay_config, face_side, dest_x_full,
+    stabilize, debug_labels, fps, w, h, enc,
+):
+    """Render a single active segment to its own file."""
+    # Check if this is a pure hold region (constant p≈1.0, constant z, no effects)
+    seg_p = p_curve[frame_start:frame_end + 1]
+    seg_blur = blur_strength[frame_start:frame_end + 1]
+    seg_whip = whip_strength[frame_start:frame_end + 1]
+    seg_z = zooms[frame_start:frame_end + 1]
+    n_seg = frame_end - frame_start + 1
+
+    # Detect hold sub-region within this segment
+    is_hold = (seg_p > 0.999) & (seg_blur < 0.001) & (seg_whip < 0.001)
+    z_range = float(seg_z[is_hold].max() - seg_z[is_hold].min()) if is_hold.any() else 1.0
+    is_pure_hold = is_hold.all() and z_range < 0.01 and not overlay and n_seg > int(fps)
+
+    if is_pure_hold:
+        hold_z = float(seg_z[0])
+        print(f"     FFmpeg hold: {n_seg} frames at z={hold_z:.2f}", flush=True)
+        _render_hold_ffmpeg(
+            input_path, output_path, frame_start, frame_end,
+            face_data_stable, hold_z, face_side, dest_x_full,
+            fps, w, h, enc,
+        )
+        return
+
+    has_zoom_blur = seg_blur.max() > 0
+    has_whip = seg_whip.max() > 0
+
+    # Overlay config lookups
+    ovl_pos = overlay_config.get("position", "left") if overlay_config else "left"
+    ovl_mg = overlay_config.get("margin", 1.8) if overlay_config else 1.8
+
+    # Gradient fade setup
+    need_fade = face_side != "center"
+    edge_strip = max(int(w * EDGE_STRIP_FRAC), 1)
+    fade_width = int(w * FADE_WIDTH_FRAC)
+    base_gradient_3ch = None
+    if need_fade:
+        ramp = np.linspace(0, 1, fade_width).astype(np.float32)
+        base_gradient = np.ones((h, w), dtype=np.float32)
+        if face_side == "right":
+            base_gradient[:, :fade_width] = ramp[np.newaxis, :]
+        else:
+            base_gradient[:, w - fade_width:] = ramp[::-1][np.newaxis, :]
+        base_gradient_3ch = base_gradient[:, :, np.newaxis]
+
+    # Allocate buffers
+    buf_warped = np.empty((h, w, 3), dtype=np.uint8)
+    buf_out = np.empty((h, w, 3), dtype=np.uint8)
+    buf_warped_f32 = np.empty((h, w, 3), dtype=np.float32)
+    buf_fade_alpha = np.empty((h, w, 1), dtype=np.float32)
+    buf_blend = np.empty((h, w, 3), dtype=np.float32)
+    fade_bg_buf = np.empty((h, w, 3), dtype=np.float32)
+    buf_rgb = np.empty((h, w, 3), dtype=np.uint8)
+    if has_zoom_blur:
+        buf_blur_accum = np.empty((h, w, 3), dtype=np.float32)
+        buf_blur_sample = np.empty((h, w, 3), dtype=np.uint8)
+    else:
+        buf_blur_accum = buf_blur_sample = None
+
+    cap = cv2.VideoCapture(input_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+    writer = open_ffmpeg_writer(output_path, w, h, fps, enc)
+
+    for idx in range(frame_start, frame_end + 1):
+        ok, bgr = cap.read()
+        if not ok:
+            break
+
+        p = float(p_curve[idx])
+        z = float(zooms[idx])
+        local = idx - frame_start
+
+        # Passthrough within active segment (frame has no actual effect)
+        if p < 0.001 and blur_strength[idx] < 0.001 and whip_strength[idx] < 0.001:
+            cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=buf_out)
+            writer.stdin.write(buf_out.data)
+            continue
+
+        cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=buf_rgb)
+        rgb = buf_rgb
+        t = times[idx]
+
+        # Warp geometry (no-stabilize path only)
+        fx_raw, fy_raw, fw_raw, fh_raw = face_data[idx]
+        if face_data_stable is not None and p > 0.001:
+            fx_st = float(face_data_stable[idx][0])
+            fy_st = float(face_data_stable[idx][1])
+            fx = lerp(float(fx_raw), fx_st, p)
+            fy = lerp(float(fy_raw), fy_st, p)
+        else:
+            fx, fy = float(fx_raw), float(fy_raw)
+        fw, fh = float(fw_raw), float(fh_raw)
+
+        tx = lerp(w / 2, fx, p)
+        ty = lerp(h / 2, fy, p)
+        dx = lerp(w / 2, dest_x_full, p)
+        sx = dx - tx * z
+        sy = h / 2 - ty * z
+        M = np.float32([[z, 0, sx], [0, z, sy]])
+        sfx = fx * z + sx
+        sfy = fy * z + sy
+        sfw = fw * z
+        sfh = fh * z
+
+        # Warp
+        cv2.warpAffine(rgb, M, (w, h), dst=buf_warped, borderMode=cv2.BORDER_REPLICATE)
+
+        # Post-warp effects
+        if has_zoom_blur and blur_strength[idx] > 0.001:
+            apply_zoom_blur(
+                buf_warped, rgb, M, w, h,
+                float(blur_strength[idx]), int(blur_n_samples[idx]),
+                buf_blur_accum, buf_blur_sample,
+            )
+        if has_whip and whip_strength[idx] > 0.001:
+            apply_whip(buf_warped, rgb, M, w, h, float(whip_strength[idx]), whip_direction[idx])
+
+        # Gradient fade
+        if p < 0.001 or not need_fade:
+            np.copyto(buf_out, buf_warped)
+        else:
+            if face_side == "right":
+                edge_band = buf_warped[:, :edge_strip].mean(axis=1, dtype=np.float32)
+            else:
+                edge_band = buf_warped[:, w - edge_strip:].mean(axis=1, dtype=np.float32)
+            CRUSH_H = 6
+            edge_col = edge_band.reshape(h, 1, 3)
+            crushed = cv2.resize(edge_col, (1, CRUSH_H), interpolation=cv2.INTER_AREA)
+            edge_band = cv2.resize(crushed, (1, h), interpolation=cv2.INTER_LINEAR).reshape(h, 3)
+            fade_bg_buf[:] = edge_band[:, np.newaxis, :]
+            buf_warped_f32[:] = buf_warped
+            np.multiply(base_gradient_3ch, p, out=buf_fade_alpha)
+            buf_fade_alpha += 1.0 - p
+            np.multiply(buf_warped_f32, buf_fade_alpha, out=buf_blend)
+            np.subtract(1.0, buf_fade_alpha, out=buf_fade_alpha)
+            np.multiply(fade_bg_buf, buf_fade_alpha, out=buf_warped_f32)
+            np.add(buf_blend, buf_warped_f32, out=buf_blend)
+            np.clip(buf_blend, 0, 255, out=buf_blend)
+            np.copyto(buf_out, buf_blend.astype(np.uint8))
+
+        # Overlay
+        if overlay and overlay_config and p > 0.01:
+            opacity = min(p * 3.0, 1.0)
+            if opacity > 0:
+                oi, om = overlay.get_frame(t)
+                oh, ow_ = oi.shape[:2]
+                if ovl_pos == "left":
+                    ox, oy = int(sfx - sfw / 2 * ovl_mg - ow_), int(sfy - oh // 2)
+                elif ovl_pos == "right":
+                    ox, oy = int(sfx + sfw / 2 * ovl_mg), int(sfy - oh // 2)
+                elif ovl_pos == "top":
+                    ox, oy = int(sfx - ow_ // 2), int(sfy - sfh / 2 * ovl_mg - oh)
+                else:
+                    ox, oy = int(sfx - ow_ // 2), int(sfy + sfh / 2 * ovl_mg)
+                x1, y1 = max(0, ox), max(0, oy)
+                x2, y2 = min(w, ox + ow_), min(h, oy + oh)
+                if x1 < x2 and y1 < y2:
+                    s1, s2 = x1 - ox, y1 - oy
+                    roi = buf_out[y1:y2, x1:x2].astype(np.float32)
+                    o = oi[s2:s2 + y2 - y1, s1:s1 + x2 - x1]
+                    a = om[s2:s2 + y2 - y1, s1:s1 + x2 - x1] * opacity
+                    buf_out[y1:y2, x1:x2] = (o * a + roi * (1.0 - a)).astype(np.uint8)
+
+        # Debug labels
+        if debug_labels:
+            labels = []
+            if p > 0.01:
+                labels.append("bounce")
+            if has_zoom_blur and blur_strength[idx] > 0.001:
+                labels.append("zoom_blur")
+            if has_whip and whip_strength[idx] > 0.001:
+                labels.append("whip")
+            _draw_debug_label(buf_out, labels, h)
+
+        writer.stdin.write(buf_out.data)
+        if local % 100 == 0:
+            print(f"     frame {local}/{n_seg}", flush=True)
+
+    cap.release()
+    writer.stdin.close()
+    writer.wait()
+
+
+def _concat_segments(segment_paths, output_path):
+    """Concatenate segments via FFmpeg concat demuxer (stream copy)."""
+    tmp_dir = os.path.dirname(segment_paths[0])
+    filelist = os.path.join(tmp_dir, "filelist.txt")
+    with open(filelist, "w") as f:
+        for p in segment_paths:
+            f.write(f"file '{p}'\n")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", filelist, "-c", "copy", output_path,
+        ],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+    )
+
+
+def _run_segment_pipeline(
+    input_path, output_path, render_ranges, n_frames, fps,
+    face_data, face_data_stable, p_curve, zooms,
+    blur_strength, blur_n_samples, whip_strength, whip_direction,
+    times, overlay, overlay_config, face_side, dest_x_full,
+    stabilize, debug_labels, w, h, enc,
+):
+    """Orchestrate segment-based rendering: stream-copy passthrough, render active, concat."""
+    tmp_dir = tempfile.mkdtemp(prefix="zb_seg_")
+    segments = []  # (path, type, frame_start, frame_end)
+    seg_idx = 0
+    min_hold_frames = int(fps)  # 1 second minimum for FFmpeg hold
+
+    prev_end = 0
+    for rng_start, rng_end in render_ranges:
+        # Passthrough before this range
+        if rng_start > prev_end:
+            seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_pass.mp4")
+            segments.append((seg_path, "passthrough", prev_end, rng_start - 1))
+            seg_idx += 1
+
+        # Split active range: find hold sub-region (p≈1, no effects, constant z)
+        seg_p = p_curve[rng_start:rng_end + 1]
+        seg_blur = blur_strength[rng_start:rng_end + 1]
+        seg_whip = whip_strength[rng_start:rng_end + 1]
+        is_hold = (seg_p > 0.999) & (seg_blur < 0.001) & (seg_whip < 0.001)
+        # Find first and last hold frame
+        hold_indices = np.where(is_hold)[0]
+        if len(hold_indices) > min_hold_frames and not overlay:
+            hold_local_start = int(hold_indices[0])
+            hold_local_end = int(hold_indices[-1])
+            hold_abs_start = rng_start + hold_local_start
+            hold_abs_end = rng_start + hold_local_end
+            # Check z is constant in hold region
+            hold_z = zooms[hold_abs_start:hold_abs_end + 1]
+            z_const = float(hold_z.max() - hold_z.min()) < 0.01
+
+            if z_const and (hold_local_end - hold_local_start + 1) > min_hold_frames:
+                # Split into: [transition_in] [hold] [transition_out]
+                if hold_abs_start > rng_start:
+                    seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_active.mp4")
+                    segments.append((seg_path, "active", rng_start, hold_abs_start - 1))
+                    seg_idx += 1
+                seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_active.mp4")
+                segments.append((seg_path, "active", hold_abs_start, hold_abs_end))
+                seg_idx += 1
+                if hold_abs_end < rng_end:
+                    seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_active.mp4")
+                    segments.append((seg_path, "active", hold_abs_end + 1, rng_end))
+                    seg_idx += 1
+                prev_end = rng_end + 1
+                continue
+
+        # No hold split — single active segment
+        seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_active.mp4")
+        segments.append((seg_path, "active", rng_start, rng_end))
+        seg_idx += 1
+        prev_end = rng_end + 1
+
+    # Trailing passthrough
+    if prev_end < n_frames:
+        seg_path = os.path.join(tmp_dir, f"seg_{seg_idx:04d}_pass.mp4")
+        segments.append((seg_path, "passthrough", prev_end, n_frames - 1))
+
+    print(f"   Segment pipeline: {len(segments)} segments ({sum(1 for _, t, *_ in segments if t == 'active')} active, {sum(1 for _, t, *_ in segments if t == 'passthrough')} passthrough)")
+
+    t0 = time.monotonic()
+
+    # Extract passthrough segments in parallel
+    pass_segs = [(s, fs, fe) for s, typ, fs, fe in segments if typ == "passthrough"]
+    if pass_segs:
+        def _extract(args):
+            path, fs, fe = args
+            t_start = fs / fps
+            t_end = (fe + 1) / fps
+            _extract_passthrough(input_path, path, t_start, t_end, enc)
+        with ThreadPoolExecutor(max_workers=min(len(pass_segs), 4)) as pool:
+            list(pool.map(_extract, pass_segs))
+        print(f"   Passthrough segments: {len(pass_segs)} extracted in {time.monotonic() - t0:.1f}s")
+
+    # Render active segments sequentially (encoder already saturates CPU cores)
+    t1 = time.monotonic()
+    active_segs = [(s, fs, fe) for s, typ, fs, fe in segments if typ == "active"]
+    total_active_frames = sum(fe - fs + 1 for _, fs, fe in active_segs)
+
+    for si, (path, fs, fe) in enumerate(active_segs):
+        n_seg = fe - fs + 1
+        print(f"   Rendering segment {si+1}/{len(active_segs)}: frames {fs}-{fe} ({n_seg} frames)", flush=True)
+        _render_active_segment(
+            input_path, path, fs, fe,
+            face_data, face_data_stable, p_curve, zooms,
+            blur_strength, blur_n_samples, whip_strength, whip_direction,
+            times, overlay, overlay_config, face_side, dest_x_full,
+            stabilize, debug_labels, fps, w, h, enc,
+        )
+
+    elapsed_render = time.monotonic() - t1
+    print(f"   Active segments: {len(active_segs)} rendered ({total_active_frames} frames) in {elapsed_render:.1f}s ({total_active_frames / max(elapsed_render, 0.01):.1f} fps)")
+
+    # Concat all segments in order
+    segment_paths = [s for s, *_ in segments]
+    tmp_concat = os.path.join(tmp_dir, "concat_silent.mp4")
+    _concat_segments(segment_paths, tmp_concat)
+
+    # Mux audio
+    print("3. Muxing audio ...")
+    mux_audio(input_path, tmp_concat, output_path)
+
+    # Cleanup
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    total = time.monotonic() - t0
+    print(f"   Total segment pipeline: {total:.1f}s")
+    print(f"Done -> {output_path}")
 
 
 # ─── Main Effect ─────────────────────────────────────────────────────────────
@@ -815,7 +1492,20 @@ def create_zoom_bounce_effect(
         if active_ranges is not None:
             detect_frames = sum(e - s + 1 for s, e in active_ranges)
             print(f"   Selective detection: {detect_frames}/{probe_n} frames ({100*detect_frames/max(probe_n,1):.0f}%)")
-    raw_data, fps, (w, h) = get_face_data(input_path, active_ranges=active_ranges)
+    if active_ranges is not None:
+        raw_data, fps, (w, h) = get_face_data_seek(input_path, active_ranges, probe_n)
+    elif stabilize == 0:
+        # No face-dependent events (only zoom_blur/whip) — skip detection entirely
+        probe_cap = cv2.VideoCapture(input_path)
+        fps = probe_cap.get(cv2.CAP_PROP_FPS)
+        w, h = int(probe_cap.get(3)), int(probe_cap.get(4))
+        probe_n = int(probe_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        probe_cap.release()
+        default = (w // 2, h // 2, 100, 100)
+        raw_data = [default] * probe_n
+        print("   No face-dependent events — skipping detection")
+    else:
+        raw_data, fps, (w, h) = get_face_data(input_path, active_ranges=active_ranges)
     face_data = smooth_data(raw_data, alpha=0.05)
     n_frames = len(face_data)
     # Heavier smoothing: used for stabilization crop AND to dampen tracking jitter when zoomed
@@ -832,6 +1522,62 @@ def create_zoom_bounce_effect(
     )
     has_zoom_blur = blur_strength.max() > 0
     has_whip = whip_strength.max() > 0
+
+    # ── Segment pipeline (stabilize==0 only) ────────────────────────────
+    if stabilize == 0:
+        render_ranges = _compute_render_ranges(bounces, fps, n_frames)
+        if render_ranges is not None:
+            src_codec = _probe_source_codec(input_path)
+
+            # Overlay prep for segment pipeline
+            overlay = None
+            if overlay_config:
+                if overlay_config.get("type", "text") == "text":
+                    mfw = float(np.median(face_data[:, 2]))
+                    sfw = mfw * zoom_max
+                    mg = overlay_config.get("margin", 1.8)
+                    pad = int(w * 0.03)
+                    if face_side == "center":
+                        fcx = w * 0.5
+                    elif face_side == "right":
+                        fcx = w * 0.72
+                    else:
+                        fcx = w * 0.28
+                    pos = overlay_config.get("position", "left")
+                    if pos == "left":
+                        aw = int(fcx - (sfw / 2 * mg) - pad)
+                    elif pos == "right":
+                        aw = int(w - (fcx + sfw / 2 * mg) - pad)
+                    else:
+                        aw = int(w * 0.5)
+                    overlay_config = {
+                        **overlay_config,
+                        "_avail_w": max(aw, 100),
+                        "_avail_h": int(h * 0.6),
+                    }
+                overlay = create_overlay(overlay_config)
+
+            if face_side == "center":
+                dest_x_full = w * 0.5
+            elif face_side == "left":
+                dest_x_full = w * 0.28
+            else:
+                dest_x_full = w * 0.72
+
+            # Encode active segments in same codec as source → stream-copy concat works
+            enc = detect_best_encoder(src_codec)
+
+            render_frames = sum(e - s + 1 for s, e in render_ranges)
+            print(f"   Render ranges: {len(render_ranges)} range(s), {render_frames}/{n_frames} frames ({100*render_frames/max(n_frames,1):.0f}%)")
+            print(f"2. Segment pipeline ({bounce_mode} mode, {len(bounces)} bounce(s)) ...")
+            _run_segment_pipeline(
+                input_path, output_path, render_ranges, n_frames, fps,
+                face_data, face_data_stable, p_curve, zooms,
+                blur_strength, blur_n_samples, whip_strength, whip_direction,
+                times, overlay, overlay_config, face_side, dest_x_full,
+                stabilize, debug_labels, w, h, enc,
+            )
+            return
 
     # Precompute per-frame activity mask — when stabilize==0, frames with no
     # effects are pure passthrough (skip warp, fade, overlay, everything).
@@ -937,7 +1683,7 @@ def create_zoom_bounce_effect(
         # ── Passthrough fast path ────────────────────────────────────
         if frame_active is not None and not frame_active[idx]:
             cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=buf_out)
-            writer.stdin.write(buf_out.tobytes())
+            writer.stdin.write(buf_out.data)
             if idx % 50 == 0:
                 print(f"   frame {idx}/{n_frames}", flush=True)
             continue
@@ -1097,7 +1843,7 @@ def create_zoom_bounce_effect(
                 labels.append("whip")
             _draw_debug_label(buf_out, labels, h)
 
-        writer.stdin.write(buf_out.tobytes())
+        writer.stdin.write(buf_out.data)
         if idx % 50 == 0:
             print(f"   frame {idx}/{n_frames}", flush=True)
 
@@ -1120,71 +1866,7 @@ def create_zoom_bounce_effect(
 # ─── Usage ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    ts = int(time.time())
-
-    # All effects except speed_ramp (causes audio desync)
-    create_zoom_bounce_effect(
-        input_path="extremelylongvid.mp4",
-        output_path=f"extremelylongvid_all_effects_{ts}.mp4",
-        stabilize=1.03,
-        debug_labels=True,
-        bounces=[
-            # 22m timeline (~1320s) with effects distributed across the full video
-            # 1. 00:30 snap in → hold → smooth out
-            {"action": "in", "start": 30.0, "end": 30.5, "ease": "snap", "zoom": 1.4},
-            {"action": "out", "start": 38.0, "end": 38.8, "ease": "smooth"},
-            # 2. 03:00 zoom_blur overlapping a bounce
-            {
-                "action": "bounce",
-                "start": 180.0,
-                "end": 181.5,
-                "ease": "smooth",
-                "zoom": 1.3,
-            },
-            {
-                "action": "zoom_blur",
-                "start": 180.2,
-                "end": 181.3,
-                "intensity": 1.0,
-                "n_samples": 8,
-            },
-            # 3. 06:00 horizontal whip transition
-            {
-                "action": "whip",
-                "start": 360.0,
-                "end": 360.5,
-                "direction": "h",
-                "intensity": 1.0,
-            },
-            # 4. 09:00 overshoot in → hold → snap out
-            {
-                "action": "in",
-                "start": 540.0,
-                "end": 540.3,
-                "ease": "overshoot",
-                "zoom": 1.5,
-            },
-            {"action": "out", "start": 548.0, "end": 548.5, "ease": "snap"},
-            # 5. 12:00 legacy bell-curve bounce
-            (720.0, 721.5, "smooth", 1.3),
-            # 6. 15:00 bounce + 16:00 vertical whip combo
-            {
-                "action": "bounce",
-                "start": 900.0,
-                "end": 901.5,
-                "ease": "overshoot",
-                "zoom": 1.5,
-            },
-            {
-                "action": "whip",
-                "start": 960.0,
-                "end": 960.5,
-                "direction": "v",
-                "intensity": 0.8,
-            },
-            # 7. 18:00 smooth in → 21:00 overshoot out (cross-ease)
-            {"action": "in", "start": 1080.0, "end": 1080.8, "ease": "smooth", "zoom": 1.4},
-            {"action": "out", "start": 1260.0, "end": 1260.5, "ease": "overshoot"},
-            # 21:00-22:00 stabilization-only tail
-        ],
+    print(
+        "Use cv_experiments/zoom_bounce_test_runner.py to run multi-video timeline tests.\n"
+        "Example: python cv_experiments/zoom_bounce_test_runner.py --all"
     )
