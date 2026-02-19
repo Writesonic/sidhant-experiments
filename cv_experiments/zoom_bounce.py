@@ -527,10 +527,62 @@ class ThreadedVideoReader:
         self.cap.release()
 
 
+# ─── Selective detection helpers ──────────────────────────────────────────────
+
+
+def _compute_active_frame_ranges(bounces, fps, n_frames, padding_sec=2.0):
+    """
+    Return sorted list of (start_frame, end_frame) ranges where face detection
+    is needed.  Only bounce/in/out events use face data; zoom_blur and whip
+    do not.  Returns None if no face-dependent events exist.
+    """
+    raw_ranges = []
+    for b in bounces:
+        if isinstance(b, dict):
+            action = b.get("action", "bounce")
+            if action in ("zoom_blur", "whip"):
+                continue
+            start_sec, end_sec = b["start"], b["end"]
+        else:
+            start_sec, end_sec = b[0], b[1]
+        raw_ranges.append((start_sec, end_sec))
+
+    if not raw_ranges:
+        return None
+
+    # Convert to frame indices with padding for EMA warmup
+    frame_ranges = []
+    for start_sec, end_sec in raw_ranges:
+        f_start = max(0, int((start_sec - padding_sec) * fps))
+        f_end = min(n_frames - 1, int(end_sec * fps) + 1)
+        frame_ranges.append((f_start, f_end))
+
+    # Sort and merge overlapping ranges
+    frame_ranges.sort()
+    merged = [frame_ranges[0]]
+    for s, e in frame_ranges[1:]:
+        if s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+
+    return merged
+
+
+def _frame_in_ranges(idx, ranges):
+    """Check if frame index falls within any sorted range (early exit)."""
+    for s, e in ranges:
+        if idx < s:
+            return False
+        if idx <= e:
+            return True
+    return False
+
+
 # ─── Face detection ──────────────────────────────────────────────────────────
 
 
-def get_face_data(video_path):
+def get_face_data(video_path, active_ranges=None):
     opts = vision.FaceLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
@@ -544,10 +596,16 @@ def get_face_data(video_path):
     w, h = int(cap.get(3)), int(cap.get(4))
     fps = cap.get(cv2.CAP_PROP_FPS)
     data, idx, default = [], 0, (w // 2, h // 2, 100, 100)
+    last_detected = default
     while True:
         ok, bgr = cap.read()
         if not ok:
             break
+        if active_ranges is not None and not _frame_in_ranges(idx, active_ranges):
+            # Skip detection — carry forward last known position
+            data.append(last_detected)
+            idx += 1
+            continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         res = lm.detect_for_video(
             mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), int(idx * 1000 / fps)
@@ -555,14 +613,14 @@ def get_face_data(video_path):
         idx += 1
         if res.face_landmarks:
             f = res.face_landmarks[0]
-            data.append(
-                (
-                    int(f[4].x * w),
-                    int(f[4].y * h),
-                    int(abs(f[454].x - f[234].x) * w),
-                    int(abs(f[152].y - f[10].y) * h),
-                )
+            detected = (
+                int(f[4].x * w),
+                int(f[4].y * h),
+                int(abs(f[454].x - f[234].x) * w),
+                int(abs(f[152].y - f[10].y) * h),
             )
+            data.append(detected)
+            last_detected = detected
         else:
             data.append(data[-1] if data else default)
     cap.release()
@@ -746,7 +804,18 @@ def create_zoom_bounce_effect(
         )
 
     print("1. Analyzing face trajectory ...")
-    raw_data, fps, (w, h) = get_face_data(input_path)
+    active_ranges = None
+    if stabilize == 0:
+        # Quick-probe video for fps/frame_count to compute selective ranges
+        probe_cap = cv2.VideoCapture(input_path)
+        probe_fps = probe_cap.get(cv2.CAP_PROP_FPS)
+        probe_n = int(probe_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        probe_cap.release()
+        active_ranges = _compute_active_frame_ranges(bounces, probe_fps, probe_n)
+        if active_ranges is not None:
+            detect_frames = sum(e - s + 1 for s, e in active_ranges)
+            print(f"   Selective detection: {detect_frames}/{probe_n} frames ({100*detect_frames/max(probe_n,1):.0f}%)")
+    raw_data, fps, (w, h) = get_face_data(input_path, active_ranges=active_ranges)
     face_data = smooth_data(raw_data, alpha=0.05)
     n_frames = len(face_data)
     # Heavier smoothing: used for stabilization crop AND to dampen tracking jitter when zoomed
@@ -763,6 +832,15 @@ def create_zoom_bounce_effect(
     )
     has_zoom_blur = blur_strength.max() > 0
     has_whip = whip_strength.max() > 0
+
+    # Precompute per-frame activity mask — when stabilize==0, frames with no
+    # effects are pure passthrough (skip warp, fade, overlay, everything).
+    if stabilize == 0:
+        frame_active = (p_curve > 0.001) | (blur_strength > 0.001) | (whip_strength > 0.001)
+        n_active = int(frame_active.sum())
+        print(f"   Active frames: {n_active}/{n_frames} ({100*n_active/max(n_frames,1):.0f}%) — rest are passthrough")
+    else:
+        frame_active = None  # all frames need processing
 
     # Overlay prep
     overlay = None
@@ -855,6 +933,15 @@ def create_zoom_bounce_effect(
         ok, bgr = reader.read()
         if not ok:
             break
+
+        # ── Passthrough fast path ────────────────────────────────────
+        if frame_active is not None and not frame_active[idx]:
+            cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=buf_out)
+            writer.stdin.write(buf_out.tobytes())
+            if idx % 50 == 0:
+                print(f"   frame {idx}/{n_frames}", flush=True)
+            continue
+
         cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB, dst=buf_rgb)
         rgb = buf_rgb
         t = times[idx]
@@ -1037,66 +1124,67 @@ if __name__ == "__main__":
 
     # All effects except speed_ramp (causes audio desync)
     create_zoom_bounce_effect(
-        input_path="longvid.mp4",
-        output_path=f"longvid_all_effects_{ts}.mp4",
+        input_path="extremelylongvid.mp4",
+        output_path=f"extremelylongvid_all_effects_{ts}.mp4",
         stabilize=1.03,
         debug_labels=True,
         bounces=[
-            # 1. snap in → hold → smooth out
-            {"action": "in", "start": 1.5, "end": 2.0, "ease": "snap", "zoom": 1.4},
-            {"action": "out", "start": 4.5, "end": 5.3, "ease": "smooth"},
-            # 2. zoom_blur overlapping a bounce
+            # 22m timeline (~1320s) with effects distributed across the full video
+            # 1. 00:30 snap in → hold → smooth out
+            {"action": "in", "start": 30.0, "end": 30.5, "ease": "snap", "zoom": 1.4},
+            {"action": "out", "start": 38.0, "end": 38.8, "ease": "smooth"},
+            # 2. 03:00 zoom_blur overlapping a bounce
             {
                 "action": "bounce",
-                "start": 6.0,
-                "end": 7.5,
+                "start": 180.0,
+                "end": 181.5,
                 "ease": "smooth",
                 "zoom": 1.3,
             },
             {
                 "action": "zoom_blur",
-                "start": 6.2,
-                "end": 7.3,
+                "start": 180.2,
+                "end": 181.3,
                 "intensity": 1.0,
                 "n_samples": 8,
             },
-            # 3. horizontal whip transition
+            # 3. 06:00 horizontal whip transition
             {
                 "action": "whip",
-                "start": 8.5,
-                "end": 9.0,
+                "start": 360.0,
+                "end": 360.5,
                 "direction": "h",
                 "intensity": 1.0,
             },
-            # 4. overshoot in → hold → snap out
+            # 4. 09:00 overshoot in → hold → snap out
             {
                 "action": "in",
-                "start": 10.0,
-                "end": 10.3,
+                "start": 540.0,
+                "end": 540.3,
                 "ease": "overshoot",
                 "zoom": 1.5,
             },
-            {"action": "out", "start": 13.0, "end": 13.5, "ease": "snap"},
-            # 5. legacy bell-curve bounce
-            (15.0, 16.5, "smooth", 1.3),
-            # 6. bounce + vertical whip combo
+            {"action": "out", "start": 548.0, "end": 548.5, "ease": "snap"},
+            # 5. 12:00 legacy bell-curve bounce
+            (720.0, 721.5, "smooth", 1.3),
+            # 6. 15:00 bounce + 16:00 vertical whip combo
             {
                 "action": "bounce",
-                "start": 18.0,
-                "end": 19.5,
+                "start": 900.0,
+                "end": 901.5,
                 "ease": "overshoot",
                 "zoom": 1.5,
             },
             {
                 "action": "whip",
-                "start": 20.0,
-                "end": 20.5,
+                "start": 960.0,
+                "end": 960.5,
                 "direction": "v",
                 "intensity": 0.8,
             },
-            # 7. smooth in → overshoot out (cross-ease)
-            {"action": "in", "start": 22.0, "end": 22.8, "ease": "smooth", "zoom": 1.4},
-            {"action": "out", "start": 25.0, "end": 25.5, "ease": "overshoot"},
-            # 27-30s: stabilization-only tail
+            # 7. 18:00 smooth in → 21:00 overshoot out (cross-ease)
+            {"action": "in", "start": 1080.0, "end": 1080.8, "ease": "smooth", "zoom": 1.4},
+            {"action": "out", "start": 1260.0, "end": 1260.5, "ease": "overshoot"},
+            # 21:00-22:00 stabilization-only tail
         ],
     )
