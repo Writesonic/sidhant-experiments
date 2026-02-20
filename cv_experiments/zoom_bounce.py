@@ -26,6 +26,13 @@ from moviepy.editor import TextClip, VideoFileClip
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 
+# Optional CuPy for GPU-accelerated zoom_blur / whip
+try:
+    import cupy as cp
+    _HAS_CUPY = True
+except ImportError:
+    _HAS_CUPY = False
+
 
 def lerp(a, b, t):
     return a + (b - a) * t
@@ -301,19 +308,32 @@ def apply_zoom_blur(
 
     Accumulates samples at slightly different zoom levels centered on frame
     center, then blends result with original by `strength`.
+
+    When CuPy is available the accumulation and final blend run on the GPU,
+    keeping warpAffine on the CPU (OpenCV has no CuPy backend).
     """
     if strength < 0.001 or n_samples < 1:
         return
+
+    if _HAS_CUPY:
+        _apply_zoom_blur_gpu(buf_warped, rgb, M, w, h, strength, n_samples,
+                             buf_accum, buf_sample)
+    else:
+        _apply_zoom_blur_cpu(buf_warped, rgb, M, w, h, strength, n_samples,
+                             buf_accum, buf_sample)
+
+
+def _apply_zoom_blur_cpu(buf_warped, rgb, M, w, h, strength, n_samples,
+                         buf_accum, buf_sample):
     cx, cy = w / 2.0, h / 2.0
     base_zoom = M[0, 0]
     spread = 0.05 * strength * base_zoom
 
     buf_accum[:] = 0.0
     for i in range(n_samples):
-        t = (i / max(n_samples - 1, 1)) * 2.0 - 1.0  # -1 to +1
+        t = (i / max(n_samples - 1, 1)) * 2.0 - 1.0
         dz = t * spread
         sz = base_zoom + dz
-        # Adjust translation to keep center fixed
         M_sample = M.copy()
         M_sample[0, 0] = sz
         M_sample[1, 1] = sz
@@ -325,21 +345,60 @@ def apply_zoom_blur(
         buf_accum += buf_sample.astype(np.float32)
 
     buf_accum /= n_samples
-    # Blend: result = lerp(original, blurred, strength)
     orig_f = buf_warped.astype(np.float32)
     blended = orig_f + (buf_accum - orig_f) * strength
     np.clip(blended, 0, 255, out=blended)
     np.copyto(buf_warped, blended.astype(np.uint8))
 
 
+def _apply_zoom_blur_gpu(buf_warped, rgb, M, w, h, strength, n_samples,
+                         buf_accum, buf_sample):
+    cx, cy = w / 2.0, h / 2.0
+    base_zoom = M[0, 0]
+    spread = 0.05 * strength * base_zoom
+
+    # Accumulate on GPU
+    g_accum = cp.zeros((h, w, 3), dtype=cp.float32)
+    for i in range(n_samples):
+        t = (i / max(n_samples - 1, 1)) * 2.0 - 1.0
+        dz = t * spread
+        sz = base_zoom + dz
+        M_sample = M.copy()
+        M_sample[0, 0] = sz
+        M_sample[1, 1] = sz
+        M_sample[0, 2] = M[0, 2] + cx * (base_zoom - sz)
+        M_sample[1, 2] = M[1, 2] + cy * (base_zoom - sz)
+        # warpAffine stays on CPU (OpenCV)
+        cv2.warpAffine(
+            rgb, M_sample, (w, h), dst=buf_sample, borderMode=cv2.BORDER_REPLICATE
+        )
+        g_accum += cp.asarray(buf_sample, dtype=cp.float32)
+
+    g_accum /= n_samples
+    # Blend on GPU
+    g_orig = cp.asarray(buf_warped, dtype=cp.float32)
+    g_blended = g_orig + (g_accum - g_orig) * strength
+    cp.clip(g_blended, 0, 255, out=g_blended)
+    np.copyto(buf_warped, cp.asnumpy(g_blended.astype(cp.uint8)))
+
+
 def apply_whip(buf_warped, rgb, M, w, h, strength, direction):
     """
     Directional motion blur applied directly to the warped frame.
     Simulates a fast whip-pan without shifting the actual frame content.
+
+    When CuPy is available the convolution and blend run on the GPU.
     """
     if strength < 0.001:
         return
-    # Motion blur kernel size scales with strength (3–81px, always odd)
+
+    if _HAS_CUPY:
+        _apply_whip_gpu(buf_warped, strength, direction)
+    else:
+        _apply_whip_cpu(buf_warped, strength, direction)
+
+
+def _apply_whip_cpu(buf_warped, strength, direction):
     ksize = max(3, min(81, int(81 * strength) | 1))
     kernel = np.zeros((ksize, ksize), dtype=np.float32)
     if direction == "v":
@@ -348,6 +407,19 @@ def apply_whip(buf_warped, rgb, M, w, h, strength, direction):
         kernel[ksize // 2, :] = 1.0 / ksize
     blurred = cv2.filter2D(buf_warped, -1, kernel)
     cv2.addWeighted(buf_warped, 1.0 - strength, blurred, strength, 0, dst=buf_warped)
+
+
+def _apply_whip_gpu(buf_warped, strength, direction):
+    from cupyx.scipy.ndimage import convolve
+    ksize = max(3, min(81, int(81 * strength) | 1))
+    g_kernel = cp.zeros((ksize, 1, 1) if direction == "v" else (1, ksize, 1),
+                        dtype=cp.float32)
+    g_kernel[:] = 1.0 / ksize
+    g_src = cp.asarray(buf_warped, dtype=cp.float32)
+    g_blurred = convolve(g_src, g_kernel, mode="reflect")
+    g_result = g_src + (g_blurred - g_src) * strength
+    cp.clip(g_result, 0, 255, out=g_result)
+    np.copyto(buf_warped, cp.asnumpy(g_result.astype(cp.uint8)))
 
 
 # ─── Encoder detection ───────────────────────────────────────────────────────

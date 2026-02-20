@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from zoom_bounce import create_zoom_bounce_effect
+from zoom_bounce_nuclear import create_zoom_bounce_effect_nuclear
 
 
 TEST_CASES = [
@@ -243,6 +244,11 @@ def parse_args() -> argparse.Namespace:
         help="Run all test cases",
     )
     parser.add_argument(
+        "--nuclear",
+        action="store_true",
+        help="Use nuclear (zero-copy FFmpeg) renderer instead of original",
+    )
+    parser.add_argument(
         "--skip-missing",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -270,7 +276,9 @@ def main() -> None:
     base_dir = Path(__file__).resolve().parent
     selected = resolve_cases(args)
 
-    print(f"Running {len(selected)} case(s)")
+    effect_fn = create_zoom_bounce_effect_nuclear if args.nuclear else create_zoom_bounce_effect
+    mode_label = "nuclear" if args.nuclear else "original"
+    print(f"Running {len(selected)} case(s) [{mode_label}]")
     for case in selected:
         input_path = base_dir / case["input_path"]
         if not input_path.exists():
@@ -286,7 +294,7 @@ def main() -> None:
         print(f"\n=== {case['name']} ===")
         print(f"Input:  {input_path}")
         print(f"Output: {output_path}")
-        create_zoom_bounce_effect(
+        effect_fn(
             input_path=str(input_path),
             output_path=str(output_path),
             **case["kwargs"],
