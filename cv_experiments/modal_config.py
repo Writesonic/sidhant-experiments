@@ -37,6 +37,17 @@ INPUT_DIR = f"{VOLUME_MOUNT}/input"
 OUTPUT_DIR = f"{VOLUME_MOUNT}/output"
 
 # ---------------------------------------------------------------------------
+# S3 cloud bucket mount
+# ---------------------------------------------------------------------------
+S3_BUCKET_NAME = "ai-video-actions-755620792222-us-east-1"
+S3_MOUNT_PATH = "/s3data"
+s3_secret = modal.Secret.from_name("aws-s3-creds")
+s3_mount = modal.CloudBucketMount(
+    bucket_name=S3_BUCKET_NAME,
+    secret=s3_secret,
+)
+
+# ---------------------------------------------------------------------------
 # Base image — shared layers (no source code baked in)
 # Prod will mount S3; dev adds local dir on top.
 # ---------------------------------------------------------------------------

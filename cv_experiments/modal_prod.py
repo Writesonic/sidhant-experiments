@@ -8,7 +8,7 @@ Features:
   - Two GPU-tier classes: ZoomBounceL4 (standard) and ZoomBounceL40S (premium)
   - Auto-routing by video size, explicit tier selection, and fallback chain
   - Three HTTP endpoints: /process (sync), /submit (async), /status (poll)
-  - TODO: swap add_local_dir for S3 mount when ready
+  - S3 bucket mounted at /s3data for cloud storage access
 """
 
 from __future__ import annotations
@@ -19,6 +19,10 @@ from typing import Any
 
 import modal
 from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+
+import os
+import time
 
 from modal_config import (
     DEFAULT_TIER,
@@ -26,14 +30,16 @@ from modal_config import (
     GPU_TIERS,
     LOCAL_SRC_DIR,
     REMOTE_SRC_DIR,
+    S3_MOUNT_PATH,
     TIMEOUT_PROD,
     base_image,
+    s3_mount,
+    s3_secret,
 )
 
 logger = logging.getLogger(__name__)
 
-# Prod image: base + local source code
-# TODO: replace add_local_dir with S3 mount when ready
+# Prod image: base + local source code + S3 bucket mounted at /s3data
 image = (
     base_image
     .add_local_dir(LOCAL_SRC_DIR, remote_path=REMOTE_SRC_DIR)
@@ -76,6 +82,20 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
 
 
+class ProcessToS3Request(BaseModel):
+    input_s3_key: str | None = Field(None, description="S3 key to read input from via /s3data mount (preferred — no HTTP download)")
+    input_url: str | None = Field(None, description="Presigned URL fallback if input is not on the mounted S3 bucket")
+    output_s3_key: str = Field(..., description="S3 key where output video will be written via /s3data mount")
+    gpu_tier: str | None = Field(None, description='GPU tier: "standard" (L4), "premium" (L40S), or null for auto')
+    kwargs: dict[str, Any] = Field(default_factory=dict, description="Extra kwargs for create_zoom_bounce_effect")
+
+
+class ProcessToS3Response(BaseModel):
+    status: str = "completed"
+    output_s3_key: str
+    gpu_tier: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Processor classes — one per GPU tier, identical logic
 # ---------------------------------------------------------------------------
@@ -88,6 +108,8 @@ _RETRIES = modal.Retries(max_retries=2, backoff_coefficient=2.0, initial_delay=5
     timeout=GPU_TIERS["standard"]["timeout"],
     scaledown_window=GPU_TIERS["standard"]["scaledown"],
     retries=_RETRIES,
+    volumes={S3_MOUNT_PATH: s3_mount},
+    secrets=[s3_secret],
 )
 class ZoomBounceL4:
     @modal.enter()
@@ -96,17 +118,16 @@ class ZoomBounceL4:
         import sys
         sys.path.insert(0, "/root/cv_experiments")
 
-        import cv2  # noqa: F401
-        import cupy  # noqa: F401
-        import mediapipe  # noqa: F401
-        import numpy  # noqa: F401
+
 
         from zoom_bounce_gpu import create_zoom_bounce_effect
         self._effect_fn = create_zoom_bounce_effect
 
     @modal.method()
-    def process(self, input_bytes: bytes, output_filename: str, **kwargs) -> bytes:
-        """Process video bytes and return result bytes."""
+    def process(self, input_bytes: bytes, output_filename: str, output_s3_key: str = None, **kwargs) -> bytes:
+        """Process video bytes and return result bytes (or write to S3 mount if output_s3_key provided)."""
+        import shutil
+
         input_path = f"/tmp/input_{output_filename}"
         output_path = f"/tmp/{output_filename}"
 
@@ -114,6 +135,12 @@ class ZoomBounceL4:
             f.write(input_bytes)
 
         self._effect_fn(input_path, output_path, **kwargs)
+
+        if output_s3_key:
+            s3_path = f"{S3_MOUNT_PATH}/{output_s3_key}"
+            os.makedirs(os.path.dirname(s3_path), exist_ok=True)
+            shutil.copy(output_path, s3_path)
+            return b""
 
         with open(output_path, "rb") as f:
             return f.read()
@@ -125,6 +152,8 @@ class ZoomBounceL4:
     timeout=GPU_TIERS["premium"]["timeout"],
     scaledown_window=GPU_TIERS["premium"]["scaledown"],
     retries=_RETRIES,
+    volumes={S3_MOUNT_PATH: s3_mount},
+    secrets=[s3_secret],
 )
 class ZoomBounceL40S:
     @modal.enter()
@@ -133,17 +162,15 @@ class ZoomBounceL40S:
         import sys
         sys.path.insert(0, "/root/cv_experiments")
 
-        import cv2  # noqa: F401
-        import cupy  # noqa: F401
-        import mediapipe  # noqa: F401
-        import numpy  # noqa: F401
-
         from zoom_bounce_gpu import create_zoom_bounce_effect
+
         self._effect_fn = create_zoom_bounce_effect
 
     @modal.method()
-    def process(self, input_bytes: bytes, output_filename: str, **kwargs) -> bytes:
-        """Process video bytes and return result bytes."""
+    def process(self, input_bytes: bytes, output_filename: str, output_s3_key: str = None, **kwargs) -> bytes:
+        """Process video bytes and return result bytes (or write to S3 mount if output_s3_key provided)."""
+        import shutil
+
         input_path = f"/tmp/input_{output_filename}"
         output_path = f"/tmp/{output_filename}"
 
@@ -151,6 +178,12 @@ class ZoomBounceL40S:
             f.write(input_bytes)
 
         self._effect_fn(input_path, output_path, **kwargs)
+
+        if output_s3_key:
+            s3_path = f"{S3_MOUNT_PATH}/{output_s3_key}"
+            os.makedirs(os.path.dirname(s3_path), exist_ok=True)
+            shutil.copy(output_path, s3_path)
+            return b""
 
         with open(output_path, "rb") as f:
             return f.read()
@@ -233,7 +266,7 @@ def _resolve_input_bytes(req: ProcessRequest) -> tuple[bytes | None, str | None]
         return None, "Provide either input_path or input_url"
 
 
-@app.function(image=image, timeout=TIMEOUT_PROD)
+@app.function(image=image, timeout=TIMEOUT_PROD, volumes={S3_MOUNT_PATH: s3_mount}, secrets=[s3_secret])
 @modal.fastapi_endpoint(method="POST", docs=True)
 def process_sync(req: ProcessRequest):
     """Synchronous processing — blocks until done. Returns the MP4 file directly."""
@@ -266,11 +299,61 @@ def process_sync(req: ProcessRequest):
     )
 
 
-@app.function(image=image, timeout=60)
+@app.function(image=image, timeout=TIMEOUT_PROD, volumes={S3_MOUNT_PATH: s3_mount}, secrets=[s3_secret])
+@modal.fastapi_endpoint(method="POST", docs=True)
+def process_to_s3(req: ProcessToS3Request) -> ProcessToS3Response:
+    """Process video and write output directly to S3 via mount. No byte streaming over HTTP.
+
+    Input: read from S3 mount (input_s3_key) or download from presigned URL (input_url).
+    Output: written to /s3data/{output_s3_key} — caller reads from S3 directly.
+    """
+    output_filename = f"{uuid.uuid4().hex[:12]}.mp4"
+
+    # Resolve input bytes — prefer S3 mount (no HTTP overhead)
+    if req.input_s3_key:
+        input_s3_path = f"{S3_MOUNT_PATH}/{req.input_s3_key}"
+        if not os.path.exists(input_s3_path):
+            return JSONResponse(status_code=400, content={"error": f"Input not found on S3 mount: {req.input_s3_key}"})
+        with open(input_s3_path, "rb") as f:
+            input_bytes = f.read()
+    elif req.input_url:
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen(req.input_url, timeout=120)
+            input_bytes = resp.read()
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": f"Failed to download from URL: {e}"})
+    else:
+        return JSONResponse(status_code=400, content={"error": "Provide either input_s3_key or input_url"})
+
+    # Route to GPU tier
+    size_mb = len(input_bytes) / 1e6
+    if req.gpu_tier and req.gpu_tier in GPU_TIERS:
+        tier = req.gpu_tier
+    else:
+        tier = "premium" if size_mb >= 50 else "standard"
+
+    # Process with S3 output
+    _result_bytes, tier_used = _call_with_fallback(
+        input_bytes=input_bytes,
+        output_filename=output_filename,
+        tier=tier,
+        spawn=False,
+        output_s3_key=req.output_s3_key,
+        **req.kwargs,
+    )
+
+    return ProcessToS3Response(
+        status="completed",
+        output_s3_key=req.output_s3_key,
+        gpu_tier=tier_used,
+    )
+
+
+@app.function(image=image, timeout=60, volumes={S3_MOUNT_PATH: s3_mount}, secrets=[s3_secret])
 @modal.fastapi_endpoint(method="POST", docs=True)
 def submit_async(req: ProcessRequest) -> JobSubmitResponse:
     """Async submission — returns call_id immediately. Poll /status for result."""
-    from fastapi.responses import JSONResponse
 
     output_filename = req.output_filename or f"{uuid.uuid4().hex[:12]}.mp4"
 
@@ -289,7 +372,7 @@ def submit_async(req: ProcessRequest) -> JobSubmitResponse:
     return JobSubmitResponse(call_id=call.object_id, gpu_tier=tier_used)
 
 
-@app.function(image=image, timeout=60)
+@app.function(image=image, timeout=60, volumes={S3_MOUNT_PATH: s3_mount}, secrets=[s3_secret])
 @modal.fastapi_endpoint(method="GET", docs=True)
 def job_status(call_id: str) -> JobStatusResponse:
     """Poll job status by call_id returned from /submit."""
@@ -305,7 +388,7 @@ def job_status(call_id: str) -> JobStatusResponse:
         return JobStatusResponse(call_id=call_id, status="failed", error=str(e))
 
 
-@app.function(image=image, timeout=TIMEOUT_PROD)
+@app.function(image=image, timeout=TIMEOUT_PROD, volumes={S3_MOUNT_PATH: s3_mount}, secrets=[s3_secret])
 @modal.fastapi_endpoint(method="GET", docs=True)
 def job_result(call_id: str, filename: str = "output.mp4"):
     """Download the result video for a completed job. Blocks until done."""
@@ -338,8 +421,7 @@ def main(input_file: str, output_file: str = None, debug_labels: bool = True, gp
 
     Usage: modal run modal_prod.py --input-file path/to/vid.mp4 [--gpu-tier premium]
     """
-    import os
-    import time
+
 
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file not found: {input_file}")
