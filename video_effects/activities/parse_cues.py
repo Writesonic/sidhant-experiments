@@ -14,17 +14,24 @@ logger = logging.getLogger(__name__)
 async def parse_effect_cues(input_data: dict) -> dict:
     """Parse effect cues from transcript using LLM.
 
-    Input: {"transcript": str, "segments": list[dict], "duration": float}
+    Input: {"transcript": str, "segments": list[dict], "duration": float, "feedback": str (optional)}
     Output: {"effects": list[dict], "reasoning": str}
     """
     transcript = input_data["transcript"]
     segments = input_data["segments"]
     duration = input_data.get("duration", 0)
+    feedback = input_data.get("feedback", "")
 
     system_prompt = load_prompt("parse_effect_cues.md")
 
     # Build user message with timestamped transcript
     lines = []
+
+    if feedback:
+        lines.append("## IMPORTANT: Previous attempt was rejected by the user")
+        lines.append(f"Feedback: {feedback}")
+        lines.append("Please adjust your effect choices based on this feedback.\n")
+
     lines.append(f"Video duration: {duration:.1f} seconds\n")
     lines.append("## Timestamped Transcript\n")
 

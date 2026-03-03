@@ -95,44 +95,55 @@ async def run_workflow(args) -> None:
     )
 
     if not args.auto_approve:
-        # Poll for timeline to be ready
-        print("\nWaiting for effect analysis...")
-        timeline = None
-        for _ in range(120):  # 2 minutes max
-            await asyncio.sleep(1)
-            try:
-                timeline = await handle.query("get_timeline")
-                if timeline is not None:
-                    break
-            except Exception:
-                pass
+        approved = False
+        for attempt in range(5):
+            # Poll for timeline to be ready
+            msg = "Waiting for effect analysis..." if attempt == 0 else "Waiting for re-analysis..."
+            print(f"\n{msg}")
+            prev_timeline = timeline if attempt > 0 else None
+            timeline = None
+            for _ in range(120):  # 2 minutes max
+                await asyncio.sleep(1)
+                try:
+                    timeline = await handle.query("get_timeline")
+                    # On retries, wait for a NEW timeline (different from previous)
+                    if timeline is not None and timeline != prev_timeline:
+                        break
+                except Exception:
+                    pass
 
-        if timeline is None:
-            print("Error: Timed out waiting for timeline")
-            return
-
-        _print_timeline(timeline)
-
-        # Interactive approval
-        while True:
-            choice = input("\nApprove? [y/n/edit/json]: ").strip().lower()
-            if choice in ("y", "yes"):
-                await handle.signal("approve_timeline", True)
-                print("Timeline approved. Processing effects...")
-                break
-            elif choice in ("n", "no"):
-                await handle.signal("approve_timeline", False)
-                print("Timeline rejected.")
-                result = await handle.result()
-                print(f"Workflow completed: {result}")
+            if timeline is None or timeline == prev_timeline:
+                print("Error: Timed out waiting for timeline")
                 return
-            elif choice == "json":
-                print(json.dumps(timeline, indent=2))
-            elif choice == "edit":
-                print("Edit the timeline JSON and paste it back (not yet implemented)")
-                print("For now, approve or reject.")
-            else:
-                print("Please enter y, n, edit, or json")
+
+            _print_timeline(timeline)
+
+            # Interactive approval
+            while True:
+                choice = input("\nApprove? [y/n/json]: ").strip().lower()
+                if choice in ("y", "yes"):
+                    await handle.signal("approve_timeline", True, "")
+                    print("Timeline approved. Processing effects...")
+                    approved = True
+                    break
+                elif choice in ("n", "no"):
+                    feedback = input("Feedback (what to change): ").strip()
+                    await handle.signal("approve_timeline", False, feedback)
+                    print(f"Rejected with feedback. Retrying... (attempt {attempt + 2}/5)")
+                    break
+                elif choice == "json":
+                    print(json.dumps(timeline, indent=2))
+                else:
+                    print("Please enter y, n, or json")
+
+            if approved:
+                break
+        else:
+            print("Max retries reached.")
+            result = await handle.result()
+            if result.error:
+                print(f"  Error: {result.error}")
+            return
 
     # Wait for completion
     print("Waiting for workflow completion...")

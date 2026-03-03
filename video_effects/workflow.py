@@ -3,9 +3,9 @@
 Pipeline (7 groups):
   G1: Extract video info + audio
   G2: Transcribe audio
-  G3: LLM: parse effect cues from transcript
-  G4: Validate timeline + resolve conflicts
-  G5: CLI approval (handled externally via signal)
+  G3: LLM: parse effect cues from transcript  ─┐
+  G4: Validate timeline + resolve conflicts     │ loops on rejection
+  G5: CLI approval                             ─┘
   G6: Execute effects in dependency order
   G7: Final composition + audio mux
 """
@@ -18,18 +18,22 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
 
+MAX_RETRIES = 5
+
 
 @workflow.defn(name="VideoEffectsWorkflow")
 class VideoEffectsWorkflow:
 
     def __init__(self):
-        self._approved = False
+        self._approval_decision: bool | None = None  # None = pending, True = approved, False = rejected
+        self._rejection_feedback: str = ""
         self._timeline_data: dict | None = None
 
     @workflow.signal
-    async def approve_timeline(self, approved: bool) -> None:
+    async def approve_timeline(self, approved: bool, feedback: str = "") -> None:
         """Signal from CLI to approve or reject the effect timeline."""
-        self._approved = approved
+        self._approval_decision = approved
+        self._rejection_feedback = feedback
 
     @workflow.query
     def get_timeline(self) -> dict | None:
@@ -69,34 +73,47 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=activity_timeout,
         )
 
-        # ── G3: LLM parse effect cues ──
-        parse_result = await workflow.execute_activity(
-            "vfx_parse_effect_cues",
-            {
+        # ── G3-G5 loop: parse → validate → approve (retries on rejection) ──
+        rejection_feedback = ""
+        for attempt in range(MAX_RETRIES):
+            # G3: LLM parse effect cues
+            parse_input = {
                 "transcript": transcript_result["transcript"],
                 "segments": transcript_result["segments"],
                 "duration": video_info["duration"],
-            },
-            start_to_close_timeout=activity_timeout,
-        )
+            }
+            if rejection_feedback:
+                parse_input["feedback"] = rejection_feedback
 
-        # ── G4: Validate timeline ──
-        timeline = await workflow.execute_activity(
-            "vfx_validate_timeline",
-            {
-                "effects": parse_result["effects"],
-                "duration": video_info["duration"],
-            },
-            start_to_close_timeout=activity_timeout,
-        )
-        self._timeline_data = timeline
+            parse_result = await workflow.execute_activity(
+                "vfx_parse_effect_cues",
+                parse_input,
+                start_to_close_timeout=activity_timeout,
+            )
 
-        # ── G5: CLI approval ──
-        if not input.auto_approve:
-            # Wait for approval signal (timeout after 10 minutes)
+            # G4: Validate timeline
+            timeline = await workflow.execute_activity(
+                "vfx_validate_timeline",
+                {
+                    "effects": parse_result["effects"],
+                    "duration": video_info["duration"],
+                },
+                start_to_close_timeout=activity_timeout,
+            )
+            self._timeline_data = timeline
+
+            # G5: CLI approval
+            if input.auto_approve:
+                break
+
+            # Reset decision and wait for signal
+            self._approval_decision = None
+            self._rejection_feedback = ""
+
             try:
                 await workflow.wait_condition(
-                    lambda: self._approved, timeout=timedelta(minutes=10)
+                    lambda: self._approval_decision is not None,
+                    timeout=timedelta(minutes=10),
                 )
             except asyncio.TimeoutError:
                 return VideoEffectsOutput(
@@ -104,11 +121,19 @@ class VideoEffectsWorkflow:
                     error="Timeline approval timed out after 10 minutes",
                 )
 
-            if not self._approved:
-                return VideoEffectsOutput(
-                    output_video="",
-                    error="Timeline was rejected by user",
-                )
+            if self._approval_decision:
+                break  # Approved
+
+            # Rejected — loop back to G3 with feedback
+            rejection_feedback = self._rejection_feedback or "User rejected the timeline. Try different effect choices."
+            workflow.logger.info(
+                f"Timeline rejected (attempt {attempt + 1}/{MAX_RETRIES}): {rejection_feedback}"
+            )
+        else:
+            return VideoEffectsOutput(
+                output_video="",
+                error=f"Timeline rejected {MAX_RETRIES} times, giving up",
+            )
 
         effects = timeline.get("effects", [])
         if not effects:
