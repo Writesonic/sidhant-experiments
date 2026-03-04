@@ -9,7 +9,7 @@ class ZoomEffect(BaseEffect):
     """Zoom effect with face-tracked, center, or point tracking."""
 
     def __init__(self):
-        self._cues: list[EffectCue] = []
+        super().__init__()
         self._face_data: list[tuple[float, float, float, float]] | None = None
         self._video_info: VideoInfo | None = None
 
@@ -67,11 +67,11 @@ class ZoomEffect(BaseEffect):
                 p = 1.0
 
             # Interpolate zoom: 1.0 -> target -> 1.0
-            # Ramp up in first 20%, hold, ramp down in last 20%
-            if progress < 0.15:
-                intensity = progress / 0.15
-            elif progress > 0.85:
-                intensity = (1.0 - progress) / 0.15
+            # Ramp up in first 15%, hold, ramp down in last 15%
+            if p < 0.15:
+                intensity = p / 0.15
+            elif p > 0.85:
+                intensity = (1.0 - p) / 0.15
             else:
                 intensity = 1.0
 

@@ -28,7 +28,7 @@ class SubtitleEffect(BaseEffect):
     """Subtitle burn-in / overlay effect."""
 
     def __init__(self):
-        self._cues: list[EffectCue] = []
+        super().__init__()
         self._video_info: VideoInfo | None = None
 
     def setup(self, video_info: VideoInfo, effect_cues: list[EffectCue]) -> None:

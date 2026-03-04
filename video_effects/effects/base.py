@@ -18,6 +18,9 @@ class EffectContext:
 class BaseEffect(ABC):
     """All effects implement this interface."""
 
+    def __init__(self):
+        self._cues: list[EffectCue] = []
+
     @abstractmethod
     def setup(self, video_info: VideoInfo, effect_cues: list[EffectCue]) -> None:
         """Pre-compute any data needed (face tracking, masks, etc.).

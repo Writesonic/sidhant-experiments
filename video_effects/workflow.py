@@ -30,10 +30,13 @@ class VideoEffectsWorkflow:
         self._timeline_data: dict | None = None
 
     @workflow.signal
-    async def approve_timeline(self, approved: bool, feedback: str = "") -> None:
-        """Signal from CLI to approve or reject the effect timeline."""
-        self._approval_decision = approved
-        self._rejection_feedback = feedback
+    async def approve_timeline(self, args: list) -> None:
+        """Signal from CLI to approve or reject the effect timeline.
+
+        Args is [approved: bool, feedback: str].
+        """
+        self._approval_decision = args[0]
+        self._rejection_feedback = args[1] if len(args) > 1 else ""
 
     @workflow.query
     def get_timeline(self) -> dict | None:

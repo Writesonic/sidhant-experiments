@@ -9,7 +9,7 @@ class BlurEffect(BaseEffect):
     """Blur effect: gaussian, face_pixelate, background, radial."""
 
     def __init__(self):
-        self._cues: list[EffectCue] = []
+        super().__init__()
         self._segmenter = None
         self._video_info: VideoInfo | None = None
 

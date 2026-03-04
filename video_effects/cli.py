@@ -31,24 +31,24 @@ def _print_timeline(timeline: dict) -> None:
     effects = timeline.get("effects", [])
     conflicts = timeline.get("conflicts_resolved", 0)
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 100)
     print("  VIDEO EFFECTS TIMELINE")
-    print("=" * 70)
+    print("=" * 100)
 
     if not effects:
         print("  No effects detected.")
-        print("=" * 70)
+        print("=" * 100)
         return
 
-    print(f"  {'#':<4} {'Type':<15} {'Start':>7} {'End':>7} {'Confidence':>10}  {'Cue'}")
-    print("-" * 70)
+    print(f"  {'#':<4} {'Type':<30} {'Start':>7} {'End':>7} {'Conf':>5}  {'Cue / Text'}")
+    print("-" * 100)
 
     for i, e in enumerate(effects, 1):
         etype = e.get("effect_type", "?")
         start = e.get("start_time", 0)
         end = e.get("end_time", 0)
         conf = e.get("confidence", 0)
-        cue = e.get("verbal_cue", "")[:30]
+        cue = e.get("verbal_cue", "")
 
         # Show type-specific details
         detail = ""
@@ -63,13 +63,14 @@ def _print_timeline(timeline: dict) -> None:
             detail = f" [{cp.get('preset', '?')}]"
         elif etype == "subtitle" and e.get("subtitle_params"):
             sp = e["subtitle_params"]
-            detail = f' ["{sp.get("text", "")[:20]}"]'
+            text = sp.get("text", "")
+            detail = f' ["{text}"]'
 
-        print(f"  {i:<4} {etype + detail:<15} {start:>6.1f}s {end:>6.1f}s {conf:>9.0%}  {cue}")
+        print(f"  {i:<4} {etype + detail:<30} {start:>6.1f}s {end:>6.1f}s {conf:>4.0%}  {cue}")
 
-    print("-" * 70)
+    print("-" * 100)
     print(f"  Total effects: {len(effects)}  |  Conflicts resolved: {conflicts}")
-    print("=" * 70)
+    print("=" * 100)
 
 
 async def run_workflow(args) -> None:
@@ -122,13 +123,13 @@ async def run_workflow(args) -> None:
             while True:
                 choice = input("\nApprove? [y/n/json]: ").strip().lower()
                 if choice in ("y", "yes"):
-                    await handle.signal("approve_timeline", True, "")
+                    await handle.signal("approve_timeline", [True, ""])
                     print("Timeline approved. Processing effects...")
                     approved = True
                     break
                 elif choice in ("n", "no"):
                     feedback = input("Feedback (what to change): ").strip()
-                    await handle.signal("approve_timeline", False, feedback)
+                    await handle.signal("approve_timeline", [False, feedback])
                     print(f"Rejected with feedback. Retrying... (attempt {attempt + 2}/5)")
                     break
                 elif choice == "json":

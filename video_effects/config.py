@@ -25,7 +25,7 @@ class VideoEffectsSettings(BaseSettings):
 
     # Paths
     TEMP_DIR: str = "/tmp/video_effects"
-    FACE_LANDMARKER_PATH: str = ""  # Path to face_landmarker.task model
+    FACE_LANDMARKER_PATH: str = "cv_experiments/face_landmarker.task"  # Path to face_landmarker.task model
 
     # Processing
     FACE_DETECTION_STRIDE: int = 3
