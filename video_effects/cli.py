@@ -142,8 +142,9 @@ async def run_workflow(args) -> None:
         else:
             print("Max retries reached.")
             result = await handle.result()
-            if result.error:
-                print(f"  Error: {result.error}")
+            error = result.get("error") if isinstance(result, dict) else result.error
+            if error:
+                print(f"  Error: {error}")
             return
 
     # Wait for completion
@@ -151,11 +152,18 @@ async def run_workflow(args) -> None:
     result = await handle.result()
 
     print(f"\nWorkflow completed!")
-    print(f"  Output: {result.output_video}")
-    print(f"  Effects applied: {result.effects_applied}")
-    print(f"  Phases executed: {result.phases_executed}")
-    if result.error:
-        print(f"  Error: {result.error}")
+    if isinstance(result, dict):
+        print(f"  Output: {result.get('output_video', 'N/A')}")
+        print(f"  Effects applied: {result.get('effects_applied', 'N/A')}")
+        print(f"  Phases executed: {result.get('phases_executed', 'N/A')}")
+        if result.get("error"):
+            print(f"  Error: {result['error']}")
+    else:
+        print(f"  Output: {result.output_video}")
+        print(f"  Effects applied: {result.effects_applied}")
+        print(f"  Phases executed: {result.phases_executed}")
+        if result.error:
+            print(f"  Error: {result.error}")
 
 
 def main():

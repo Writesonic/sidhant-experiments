@@ -7,8 +7,8 @@ from video_effects.schemas.effects import EffectCue, VideoInfo
 
 # Pre-defined color grading LUTs (BGR adjustments)
 COLOR_PRESETS = {
-    "warm": (10, -5, -15),     # boost red, reduce blue
-    "cool": (-15, 0, 15),      # boost blue, reduce red
+    "warm": (-15, -5, 10),     # B=-15, G=-5, R=+10 (boost red, reduce blue)
+    "cool": (15, 0, -15),      # B=+15, G=0,  R=-15 (boost blue, reduce red)
     "dramatic": (0, -20, -10), # deepen shadows
     "sepia": None,              # special handling
     "bw": None,                 # special handling
@@ -70,9 +70,9 @@ class ColorEffect(BaseEffect):
     def _apply_sepia(self, frame: np.ndarray, intensity: float) -> np.ndarray:
         """Apply sepia tone using standard sepia matrix."""
         sepia_kernel = np.array([
-            [0.272, 0.534, 0.131],
-            [0.349, 0.686, 0.168],
-            [0.393, 0.769, 0.189],
+            [0.131, 0.534, 0.272],  # out_B = 0.131*B + 0.534*G + 0.272*R
+            [0.168, 0.686, 0.349],  # out_G = 0.168*B + 0.686*G + 0.349*R
+            [0.189, 0.769, 0.393],  # out_R = 0.189*B + 0.769*G + 0.393*R
         ], dtype=np.float32)
         sepia = cv2.transform(frame, sepia_kernel)
         sepia = np.clip(sepia, 0, 255).astype(np.uint8)

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 
 from temporalio import activity
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 @activity.defn(name="vfx_compose_final")
 def compose_final(input_data: dict) -> dict:
     """Mux processed video with original audio to produce final output.
+
+    Since apply_effects outputs H.264 .mp4, this step just muxes in the
+    audio track (stream-copy video, no re-encode).
 
     Input: {
         "processed_video": str,
@@ -29,31 +33,25 @@ def compose_final(input_data: dict) -> dict:
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     if has_audio and audio_path and os.path.exists(audio_path):
-        # Mux video + audio
+        # Stream-copy video, encode audio
         cmd = [
             "ffmpeg", "-y",
             "-i", processed_video,
             "-i", audio_path,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             "-map", "0:v:0", "-map", "1:a:0",
             "-shortest",
             output_path,
         ]
+        logger.info(f"Composing final video (mux with audio): {output_path}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg composition failed: {result.stderr}")
     else:
-        # No audio — just re-encode video
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", processed_video,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-            "-an",
-            output_path,
-        ]
-
-    logger.info(f"Composing final video: {output_path}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg composition failed: {result.stderr}")
+        # No audio — just copy the file
+        logger.info(f"No audio, copying processed video to: {output_path}")
+        shutil.copy2(processed_video, output_path)
 
     logger.info(f"Final video written to {output_path}")
     return {"output_video": output_path}
