@@ -33,21 +33,35 @@ def compose_final(input_data: dict) -> dict:
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     if has_audio and audio_path and os.path.exists(audio_path):
-        # Stream-copy video, encode audio
+        # Try stream-copying audio first (fastest, no quality loss)
         cmd = [
             "ffmpeg", "-y",
             "-i", processed_video,
             "-i", audio_path,
             "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:a", "copy",
             "-map", "0:v:0", "-map", "1:a:0",
             "-shortest",
             output_path,
         ]
-        logger.info(f"Composing final video (mux with audio): {output_path}")
+        logger.info(f"Composing final video (mux with audio, stream copy): {output_path}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg composition failed: {result.stderr}")
+            # Fallback: re-encode audio to AAC if stream copy fails
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", processed_video,
+                "-i", audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-shortest",
+                output_path,
+            ]
+            logger.info("Stream copy failed, re-encoding audio to AAC")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg composition failed: {result.stderr}")
     else:
         # No audio — just copy the file
         logger.info(f"No audio, copying processed video to: {output_path}")

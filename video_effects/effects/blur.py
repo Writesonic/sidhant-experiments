@@ -82,12 +82,10 @@ class BlurEffect(BaseEffect):
         import mediapipe as mp
 
         h, w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
         with mp.solutions.face_detection.FaceDetection(
             model_selection=1, min_detection_confidence=0.5
         ) as face_det:
-            results = face_det.process(rgb)
+            results = face_det.process(frame)
 
         if not results.detections:
             return frame
@@ -116,8 +114,7 @@ class BlurEffect(BaseEffect):
         if self._segmenter is None:
             return frame
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self._segmenter.process(rgb)
+        results = self._segmenter.process(frame)
         mask = results.segmentation_mask  # float32 [0, 1]
 
         # Refine mask edges with bilateral filter

@@ -47,23 +47,27 @@ def get_video_info(video_path: str) -> dict:
         total_frames=int(duration * fps),
         audio_codec=audio_stream.get("codec_name", "") if audio_stream else "",
         has_audio=audio_stream is not None,
+        color_space=video_stream.get("color_space", ""),
+        color_transfer=video_stream.get("color_transfer", ""),
+        color_primaries=video_stream.get("color_primaries", ""),
+        pix_fmt=video_stream.get("pix_fmt", ""),
     )
     return info.model_dump()
 
 
 @activity.defn(name="vfx_extract_audio")
 def extract_audio(input_data: dict) -> dict:
-    """Extract audio track from video to WAV file.
+    """Extract audio track from video: one copy for transcription, one preserved original.
 
     Input: {"video_path": str, "output_dir": str}
-    Output: {"audio_path": str}
+    Output: {"audio_path": str, "original_audio_path": str}
     """
     video_path = input_data["video_path"]
     output_dir = input_data["output_dir"]
     os.makedirs(output_dir, exist_ok=True)
 
+    # Transcription copy: 16kHz mono WAV (Whisper input format)
     audio_path = os.path.join(output_dir, "audio.wav")
-
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
         "-vn", "-acodec", "pcm_s16le",
@@ -72,4 +76,22 @@ def extract_audio(input_data: dict) -> dict:
     ]
     subprocess.run(cmd, capture_output=True, check=True)
 
-    return {"audio_path": audio_path}
+    # Preservation copy: stream-copy original audio (no re-encoding)
+    original_audio_path = os.path.join(output_dir, "original_audio.aac")
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vn", "-c:a", "copy",
+        original_audio_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        # Fallback: if stream copy fails (e.g. unsupported container), re-encode to AAC
+        original_audio_path = os.path.join(output_dir, "original_audio.m4a")
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vn", "-c:a", "aac", "-b:a", "192k",
+            original_audio_path,
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+
+    return {"audio_path": audio_path, "original_audio_path": original_audio_path}

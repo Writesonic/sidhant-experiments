@@ -68,6 +68,7 @@ class VideoEffectsWorkflow:
             video_info_task, extract_audio_task
         )
         audio_path = audio_result["audio_path"]
+        original_audio_path = audio_result["original_audio_path"]
 
         # ── G2: Transcribe audio ──
         transcript_result = await workflow.execute_activity(
@@ -164,7 +165,7 @@ class VideoEffectsWorkflow:
             "vfx_compose_final",
             {
                 "processed_video": apply_result["processed_video"],
-                "audio_path": audio_path,
+                "audio_path": original_audio_path,
                 "output_path": output_path,
                 "has_audio": video_info.get("has_audio", True),
             },

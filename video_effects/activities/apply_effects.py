@@ -4,8 +4,10 @@ Single-pass architecture: all phases are applied per-frame in phase order,
 with direct H.264 output. No intermediate files are created.
 """
 
+import json
 import math
 import os
+import re
 import subprocess
 import time
 
@@ -19,6 +21,15 @@ from video_effects.effects.base import EffectContext
 from video_effects.schemas.effects import EffectCue, EffectType, VideoInfo
 
 # Map effect types to processor classes
+_HDR_TRANSFERS = {"arib-std-b67", "smpte2084"}  # HLG, PQ/HDR10
+_HDR_PRIMARIES = {"bt2020"}
+
+
+def _is_hdr(video_info: VideoInfo) -> bool:
+    return (video_info.color_transfer in _HDR_TRANSFERS
+            or video_info.color_primaries in _HDR_PRIMARIES)
+
+
 EFFECT_PROCESSORS = {
     EffectType.ZOOM: ZoomEffect,
     EffectType.BLUR: BlurEffect,
@@ -107,6 +118,75 @@ def _is_in_active_interval(frame_index: int, intervals: list[tuple[int, int]]) -
     return False
 
 
+class _FrameDecoder:
+    """Decode frames via ffmpeg pipe to rgb24."""
+
+    def __init__(self, input_path: str, w: int, h: int, total_frames: int,
+                 is_hdr: bool = False):
+        self._frame_size = w * h * 3
+        self._shape = (h, w, 3)
+        if is_hdr:
+            cmd = [
+                "ffmpeg", "-i", input_path,
+                "-frames:v", str(total_frames),
+                "-vf", (
+                    "zscale=t=linear:npl=100,format=gbrpf32le,"
+                    "zscale=p=bt709,"
+                    "tonemap=tonemap=hable:desat=0,"
+                    "zscale=t=bt709:m=bt709:r=tv,"
+                    "format=rgb24"
+                ),
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "pipe:1",
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-i", input_path,
+                "-frames:v", str(total_frames),
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "pipe:1",
+            ]
+        self._proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def read(self):
+        data = self._proc.stdout.read(self._frame_size)
+        if len(data) != self._frame_size:
+            return False, None
+        frame = np.frombuffer(data, dtype=np.uint8).reshape(self._shape).copy()
+        return True, frame
+
+    def release(self):
+        self._proc.stdout.close()
+        self._proc.terminate()
+        self._proc.wait()
+
+
+def _probe_decoded_size(input_path: str) -> tuple[int, int]:
+    """Get actual frame dimensions after ffmpeg autorotate."""
+    # Use showinfo filter to read the real decoded frame size
+    cmd = [
+        "ffmpeg", "-i", input_path,
+        "-frames:v", "1",
+        "-vf", "showinfo",
+        "-f", "null", "-",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    match = re.search(r"s:(\d+)x(\d+)", result.stderr)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    # Fallback: ffprobe coded dimensions (no rotation)
+    cmd = [
+        "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-print_format", "json", input_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    info = json.loads(result.stdout)
+    stream = info["streams"][0]
+    return int(stream["width"]), int(stream["height"])
+
+
 def _process_single_pass(
     input_path: str,
     output_path: str,
@@ -114,16 +194,20 @@ def _process_single_pass(
     video_info: VideoInfo,
     active_intervals: list[tuple[int, int]],
 ) -> None:
-    """Decode all frames, apply effects in phase order, encode to H.264."""
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_path}")
+    """Decode all frames, apply effects in phase order, encode to H.264.
 
-    # Read actual dimensions from the video capture, not video_info,
-    # to guarantee the raw pipe dimensions match what OpenCV decodes.
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    Uses ffmpeg pipe for both decode and encode with rgb24 as the intermediate
+    format, matching the proven color-correct pipeline from zoom_bounce.py.
+    """
+    w, h = _probe_decoded_size(input_path)
     total_frames = video_info.total_frames
+    is_hdr = _is_hdr(video_info)
+
+    if is_hdr:
+        print(f"[vfx]   HDR detected (transfer={video_info.color_transfer}, "
+              f"primaries={video_info.color_primaries}) — tone mapping to SDR")
+
+    decoder = _FrameDecoder(input_path, w, h, total_frames, is_hdr=is_hdr)
 
     active_frame_count = sum(e - s for s, e in active_intervals)
     print(f"[vfx]   resolution: {w}x{h}, total frames: {total_frames}, "
@@ -132,34 +216,41 @@ def _process_single_pass(
         print(f"[vfx]     active: frames {s}-{e} "
               f"({s / video_info.fps:.1f}s - {e / video_info.fps:.1f}s)")
 
-    # Pipe raw BGR frames to ffmpeg → H.264 output
+    # Pipe raw rgb24 frames to ffmpeg → H.264 output
     ffmpeg_proc = subprocess.Popen(
         [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
-            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-f", "rawvideo", "-pix_fmt", "rgb24",
             "-s", f"{w}x{h}", "-r", str(video_info.fps),
             "-i", "pipe:0",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-vf", "scale=in_range=full:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "16",
             "-pix_fmt", "yuv420p",
+            # Output colorspace metadata
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-color_range", "tv",
+            "-movflags", "+faststart",
             "-an",
             output_path,
         ],
         stdin=subprocess.PIPE,
     )
 
-    expected_bytes = w * h * 3  # BGR24 = 3 bytes per pixel
+    expected_bytes = w * h * 3
     start_time = time.time()
     last_log = start_time
 
     try:
         for frame_index in range(total_frames):
-            ret, frame = cap.read()
+            ret, frame = decoder.read()
             if not ret:
                 break
 
             timestamp = frame_index / video_info.fps
 
-            # Apply all active effects in phase order
+            # Apply all active effects in phase order (frames in RGB)
             if _is_in_active_interval(frame_index, active_intervals):
                 context = EffectContext(
                     video_info=video_info,
@@ -170,7 +261,7 @@ def _process_single_pass(
                 for processor in processors:
                     frame = processor.apply_frame(frame, timestamp, context)
 
-            # Ensure frame is contiguous BGR24 at the expected size
+            # Ensure frame is contiguous rgb24 at the expected size
             if frame.shape[1] != w or frame.shape[0] != h:
                 frame = cv2.resize(frame, (w, h))
             if not frame.flags['C_CONTIGUOUS']:
@@ -194,7 +285,7 @@ def _process_single_pass(
                 last_log = now
                 activity.heartbeat(f"frame {frame_index + 1}/{total_frames}")
     finally:
-        cap.release()
+        decoder.release()
         ffmpeg_proc.stdin.close()
         ffmpeg_proc.wait()
 

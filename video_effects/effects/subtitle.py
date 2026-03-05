@@ -5,23 +5,23 @@ from video_effects.effects.base import BaseEffect, EffectContext
 from video_effects.schemas.effects import EffectCue, VideoInfo
 
 
-def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
-    """Convert hex color (#RRGGBB or #RRGGBBAA) to BGR tuple."""
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color (#RRGGBB or #RRGGBBAA) to RGB tuple."""
     hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
-    return (b, g, r)
+    return (r, g, b)
 
 
-def _hex_to_bgra(hex_color: str) -> tuple[int, int, int, int]:
-    """Convert hex color to BGRA tuple."""
+def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
+    """Convert hex color to RGBA tuple."""
     hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
     a = int(hex_color[6:8], 16) if len(hex_color) >= 8 else 255
-    return (b, g, r, a)
+    return (r, g, b, a)
 
 
 class SubtitleEffect(BaseEffect):
@@ -61,7 +61,7 @@ class SubtitleEffect(BaseEffect):
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = params.font_size / 30.0  # Normalize to cv2 scale
         thickness = 2 if params.bold else 1
-        color = _hex_to_bgr(params.color)
+        color = _hex_to_rgb(params.color)
 
         # Measure text
         (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
@@ -79,7 +79,7 @@ class SubtitleEffect(BaseEffect):
 
         # Background rectangle
         if params.background_color:
-            bg_color = _hex_to_bgra(params.background_color)
+            bg_color = _hex_to_rgba(params.background_color)
             alpha = bg_color[3] / 255.0
             x1 = text_x - padding
             y1 = text_y - text_h - padding

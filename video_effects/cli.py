@@ -8,6 +8,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import sys
 import uuid
 
@@ -79,8 +80,8 @@ async def run_workflow(args) -> None:
 
     workflow_id = f"vfx-{uuid.uuid4().hex[:8]}"
     input_data = VideoEffectsInput(
-        input_video=args.input,
-        output_video=args.output,
+        input_video=os.path.abspath(args.input),
+        output_video=os.path.abspath(args.output),
         auto_approve=args.auto_approve,
     )
 
