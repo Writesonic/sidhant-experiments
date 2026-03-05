@@ -955,7 +955,8 @@ def _compute_active_frame_ranges(bounces, fps, n_frames, padding_sec=2.0,
     for start_sec, end_sec in raw_ranges:
         f_start = max(0, int((start_sec - padding_sec) * fps))
         f_end = min(n_frames - 1, int(end_sec * fps) + 1)
-        frame_ranges.append((f_start, f_end))
+        if f_start <= f_end:
+            frame_ranges.append((f_start, f_end))
 
     frame_ranges.sort()
     merged = [frame_ranges[0]]
@@ -1461,7 +1462,7 @@ def _render_active_segment_nvcodec(
 
         # Zoom-proportional dampen: suppress tracking jitter that zoom amplifies
         if z > 1.001:
-            dampen_alpha = 0.03
+            dampen_alpha = 1.0 / z
             if damp_fx is None:
                 damp_fx, damp_fy = fx, fy
             else:
@@ -1617,7 +1618,7 @@ def _render_active_segment_fallback(
 
     is_hold = (seg_p > 0.999) & (seg_blur < 0.001) & (seg_whip < 0.001)
     z_range = float(seg_z[is_hold].max() - seg_z[is_hold].min()) if is_hold.any() else 1.0
-    is_pure_hold = is_hold.all() and z_range < 0.01 and not overlay and n_seg > int(fps)
+    is_pure_hold = False
 
     if is_pure_hold:
         hold_z = float(seg_z[0])
@@ -1700,7 +1701,7 @@ def _render_active_segment_fallback(
 
         # Zoom-proportional dampen: suppress tracking jitter that zoom amplifies
         if z > 1.001:
-            dampen_alpha = 0.03
+            dampen_alpha = 1.0 / z
             if damp_fx is None:
                 damp_fx, damp_fy = fx, fy
             else:

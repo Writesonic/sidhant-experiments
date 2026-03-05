@@ -518,9 +518,16 @@ def main(input_file: str, output_file: str = None, debug_labels: bool = True, gp
         spawn=False,
         debug_labels=debug_labels,
         stabilize=0,
+        detect_holds=True,
         bounces=[
-            {"action": "in", "start": 1.2, "end": 1.6, "ease": "snap", "zoom": 1.35},
-            {"action": "out", "start": 3.1, "end": 3.5, "ease": "smooth"},
+            {"action": "in", "start": 5.0, "end": 5.4, "ease": "snap", "zoom": 1.35},
+            {"action": "out", "start": 10.0, "end": 10.4, "ease": "smooth"},
+            {"action": "in", "start": 18.0, "end": 18.4, "ease": "snap", "zoom": 1.4},
+            {"action": "out", "start": 24.0, "end": 24.4, "ease": "smooth"},
+            {"action": "in", "start": 33.0, "end": 33.4, "ease": "snap", "zoom": 1.35},
+            {"action": "out", "start": 40.0, "end": 40.4, "ease": "smooth"},
+            {"action": "in", "start": 48.0, "end": 48.4, "ease": "snap", "zoom": 1.3},
+            {"action": "out", "start": 55.0, "end": 55.4, "ease": "smooth"},
         ],
     )
 
