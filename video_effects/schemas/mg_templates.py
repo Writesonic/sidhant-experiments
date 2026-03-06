@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 class PropSpec(BaseModel):
     """Describes a single prop that a template accepts."""
     name: str
-    type: Literal["str", "int", "float", "bool", "literal"]
+    type: Literal["str", "int", "float", "bool", "literal", "list", "json"]
     required: bool = True
     default: Any = None
     description: str = ""
@@ -104,15 +104,235 @@ ANIMATED_TITLE = MGTemplateSpec(
 )
 
 
+LOWER_THIRD = MGTemplateSpec(
+    name="lower_third",
+    display_name="Lower Third",
+    description="Name/title card with accent bar. Use to introduce the speaker or label topics.",
+    props=[
+        PropSpec(
+            name="name",
+            type="str",
+            required=True,
+            description="Primary text (speaker name or topic label)",
+        ),
+        PropSpec(
+            name="title",
+            type="str",
+            required=False,
+            description="Secondary text (job title, subtitle)",
+        ),
+        PropSpec(
+            name="accentColor",
+            type="str",
+            required=False,
+            default="#FFD700",
+            description="CSS hex color for the accent bar",
+        ),
+        PropSpec(
+            name="style",
+            type="literal",
+            required=False,
+            default="slide",
+            description="Animation style",
+            choices=["slide", "fade"],
+        ),
+        PropSpec(
+            name="fontSize",
+            type="int",
+            required=False,
+            default=36,
+            description="Font size in pixels",
+            min_value=20,
+            max_value=56,
+        ),
+        PropSpec(
+            name="color",
+            type="str",
+            required=False,
+            default="#FFFFFF",
+            description="CSS hex color for text",
+        ),
+    ],
+    duration_range=(3.0, 6.0),
+    spatial=SpatialHint(
+        typical_y_range=(0.75, 0.88),
+        typical_x_range=(0.03, 0.45),
+        edge_aligned=True,
+    ),
+    guidance_file="lower_third.md",
+)
+
+
+LISTICLE = MGTemplateSpec(
+    name="listicle",
+    display_name="Listicle",
+    description="Staggered list of items that appear one by one. Use when the speaker lists things, compares items, or presents steps.",
+    props=[
+        PropSpec(
+            name="items",
+            type="list",
+            required=True,
+            description="List of text items to display",
+            max_value=5,
+        ),
+        PropSpec(
+            name="style",
+            type="literal",
+            required=False,
+            default="pop",
+            description="Animation style for each item",
+            choices=["pop", "slide"],
+        ),
+        PropSpec(
+            name="listStyle",
+            type="literal",
+            required=False,
+            default="numbered",
+            description="List marker style",
+            choices=["numbered", "bullet", "none"],
+        ),
+        PropSpec(
+            name="staggerDelay",
+            type="int",
+            required=False,
+            default=10,
+            description="Frames between each item reveal",
+            min_value=5,
+            max_value=30,
+        ),
+        PropSpec(
+            name="fontSize",
+            type="int",
+            required=False,
+            default=32,
+            description="Font size in pixels",
+            min_value=18,
+            max_value=48,
+        ),
+        PropSpec(
+            name="color",
+            type="str",
+            required=False,
+            default="#FFFFFF",
+            description="CSS hex color for text",
+        ),
+        PropSpec(
+            name="accentColor",
+            type="str",
+            required=False,
+            default="#FFD700",
+            description="CSS hex color for markers/bullets",
+        ),
+    ],
+    duration_range=(3.0, 8.0),
+    spatial=SpatialHint(
+        typical_y_range=(0.15, 0.75),
+        typical_x_range=(0.1, 0.6),
+    ),
+    guidance_file="listicle.md",
+)
+
+
+DATA_ANIMATION = MGTemplateSpec(
+    name="data_animation",
+    display_name="Data Animation",
+    description="Animated numbers, stats, or bar charts. Use when the speaker mentions specific metrics or data points.",
+    props=[
+        PropSpec(
+            name="style",
+            type="literal",
+            required=True,
+            description="Visualization sub-style",
+            choices=["counter", "stat-callout", "bar"],
+        ),
+        PropSpec(
+            name="value",
+            type="float",
+            required=True,
+            description="Primary numeric value to animate to",
+        ),
+        PropSpec(
+            name="label",
+            type="str",
+            required=True,
+            description="Label describing the value",
+        ),
+        PropSpec(
+            name="startValue",
+            type="float",
+            required=False,
+            default=0,
+            description="Starting value for counter animation",
+        ),
+        PropSpec(
+            name="suffix",
+            type="str",
+            required=False,
+            description="Text after the number (e.g. '%', 'M', 'users')",
+        ),
+        PropSpec(
+            name="prefix",
+            type="str",
+            required=False,
+            description="Text before the number (e.g. '$', '#')",
+        ),
+        PropSpec(
+            name="delta",
+            type="float",
+            required=False,
+            description="Change indicator (positive = up arrow, negative = down arrow)",
+        ),
+        PropSpec(
+            name="items",
+            type="json",
+            required=False,
+            description="Bar chart items: [{label: string, value: number}] (for bar style)",
+        ),
+        PropSpec(
+            name="fontSize",
+            type="int",
+            required=False,
+            default=48,
+            description="Font size in pixels for the main number",
+            min_value=24,
+            max_value=96,
+        ),
+        PropSpec(
+            name="color",
+            type="str",
+            required=False,
+            default="#FFFFFF",
+            description="CSS hex color for text",
+        ),
+        PropSpec(
+            name="accentColor",
+            type="str",
+            required=False,
+            default="#FFD700",
+            description="CSS hex color for bars and accents",
+        ),
+    ],
+    duration_range=(2.0, 6.0),
+    spatial=SpatialHint(
+        typical_y_range=(0.15, 0.75),
+        typical_x_range=(0.1, 0.6),
+    ),
+    guidance_file="data_animation.md",
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
 MG_TEMPLATE_REGISTRY: dict[str, MGTemplateSpec] = {
     "animated_title": ANIMATED_TITLE,
+    "lower_third": LOWER_THIRD,
+    "listicle": LISTICLE,
+    "data_animation": DATA_ANIMATION,
 }
 
-IMPLEMENTED_TEMPLATES: set[str] = {"animated_title"}
+IMPLEMENTED_TEMPLATES: set[str] = {"animated_title", "lower_third", "listicle", "data_animation"}
 
 _GUIDANCE_DIR = Path(__file__).resolve().parent.parent / "prompts" / "mg_guidance"
 

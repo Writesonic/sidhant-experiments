@@ -6,23 +6,70 @@ from temporalio import activity
 
 from video_effects.helpers.llm import call_structured, load_prompt
 from video_effects.prompts.schema import ParsedEffectCues
+from video_effects.schemas.styles import STYLE_PRESETS
 
 logger = logging.getLogger(__name__)
+
+
+def _build_effects_style_guide(style_config: dict | None) -> str:
+    """Build style guide section for the effect cue parser."""
+    if not style_config:
+        return ""
+
+    preset = None
+    font_import = style_config.get("font_import", "")
+    if font_import:
+        for sp in STYLE_PRESETS.values():
+            if sp.config.font_import == font_import:
+                preset = sp
+                break
+
+    if not preset:
+        return ""
+
+    lines = ["## Style Context\n"]
+    lines.append(f"**Style: {preset.display_name}** — {preset.description}\n")
+    lines.append(f"**Effect density**: {preset.density_label} — target {preset.density_range[0]}-{preset.density_range[1]} effects per 60 seconds.")
+
+    if preset.color_grading_preset:
+        lines.append(
+            f"**Base color grading**: {preset.color_grading_preset} at {preset.color_grading_intensity:.0%} "
+            f"is already applied to the full video. Only add color_change effects for tonal shifts that differ from this base."
+        )
+    else:
+        lines.append("**No base color grading** — feel free to add color_change effects where appropriate.")
+
+    if preset.preferred_animations:
+        energy = "high" if "bounce" in preset.preferred_animations or "pop" in preset.preferred_animations else "low"
+        if energy == "high":
+            lines.append("**Energy**: High — use snap/overshoot easing, more frequent zooms, dramatic zoom levels.")
+        else:
+            lines.append("**Energy**: Calm — use smooth easing, subtle zoom levels (1.2-1.3), fewer effects.")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 @activity.defn(name="vfx_parse_effect_cues")
 async def parse_effect_cues(input_data: dict) -> dict:
     """Parse effect cues from transcript using LLM.
 
-    Input: {"transcript": str, "segments": list[dict], "duration": float, "feedback": str (optional)}
+    Input: {"transcript": str, "segments": list[dict], "duration": float,
+            "feedback": str (optional), "style_config": dict (optional),
+            "dev_mode": bool (optional)}
     Output: {"effects": list[dict], "reasoning": str}
     """
     transcript = input_data["transcript"]
     segments = input_data["segments"]
     duration = input_data.get("duration", 0)
     feedback = input_data.get("feedback", "")
+    style_config = input_data.get("style_config")
+    dev_mode = input_data.get("dev_mode", False)
 
-    system_prompt = load_prompt("parse_effect_cues.md")
+    prompt_name = "parse_effect_cues_dev.md" if dev_mode else "parse_effect_cues.md"
+    system_prompt = load_prompt(prompt_name)
+    style_guide = _build_effects_style_guide(style_config)
+    system_prompt = system_prompt.replace("{STYLE_GUIDE}", style_guide)
 
     # Build user message with timestamped transcript
     lines = []

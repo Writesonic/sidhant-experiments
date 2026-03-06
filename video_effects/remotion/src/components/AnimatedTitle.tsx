@@ -8,6 +8,7 @@ import {
 } from "remotion";
 import type { AnimatedTitleProps, NormalizedRect } from "../types";
 import { useFaceAvoidance } from "../lib/spatial";
+import { useStyle } from "../lib/styles";
 import { SPRING_GENTLE, SPRING_BOUNCY } from "../lib/easing";
 
 export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
@@ -16,11 +17,13 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
   position,
   fontSize = 64,
   color = "#FFFFFF",
-  fontWeight = "700",
+  fontWeight,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
   const { offsetX, offsetY } = useFaceAvoidance(position);
+  const style_ = useStyle();
+  const resolvedWeight = fontWeight ?? style_.font_weights.heading;
 
   const fadeOutStart = durationInFrames - Math.round(fps * 0.5);
 
@@ -64,11 +67,11 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
           top,
           fontSize,
           color,
-          fontWeight,
-          fontFamily: "sans-serif",
+          fontWeight: resolvedWeight,
+          fontFamily: style_.font_family,
           opacity,
           whiteSpace: "nowrap",
-          textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+          textShadow: style_.text_shadow,
         }}
       >
         {displayText}
@@ -91,13 +94,13 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
           top,
           fontSize,
           color,
-          fontWeight,
-          fontFamily: "sans-serif",
+          fontWeight: resolvedWeight,
+          fontFamily: style_.font_family,
           opacity,
           transform: `scale(${scale})`,
           transformOrigin: "left top",
           whiteSpace: "nowrap",
-          textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+          textShadow: style_.text_shadow,
         }}
       >
         {text}
@@ -116,11 +119,11 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
         top,
         fontSize,
         color,
-        fontWeight,
-        fontFamily: "sans-serif",
+        fontWeight: resolvedWeight,
+        fontFamily: style_.font_family,
         opacity,
         whiteSpace: "nowrap",
-        textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+        textShadow: style_.text_shadow,
       }}
     >
       {text}

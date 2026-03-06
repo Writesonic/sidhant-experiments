@@ -26,6 +26,16 @@ export function bouncySpring(frame: number, fps: number): number {
   return spring({ frame, fps, config: SPRING_BOUNCY });
 }
 
+export const SPRING_SMOOTH = {
+  damping: 200,
+  mass: 1,
+  stiffness: 100,
+} as const;
+
 export function snappySpring(frame: number, fps: number): number {
   return spring({ frame, fps, config: SPRING_SNAPPY });
+}
+
+export function smoothSpring(frame: number, fps: number): number {
+  return spring({ frame, fps, config: SPRING_SMOOTH });
 }

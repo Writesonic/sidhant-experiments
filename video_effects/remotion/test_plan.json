@@ -1,4 +1,17 @@
 {
+  "styleConfig": {
+    "font_family": "sans-serif",
+    "font_import": "Inter",
+    "font_weights_to_load": ["400", "600", "700"],
+    "palette": ["#F5F0EB", "#2D2D2D", "#C49A6C"],
+    "text_shadow": "0 1px 4px rgba(0,0,0,0.3)",
+    "font_weights": {
+      "heading": "600",
+      "body": "400",
+      "emphasis": "700",
+      "marker": "600"
+    }
+  },
   "components": [
     {
       "template": "animated_title",
@@ -27,8 +40,127 @@
       },
       "bounds": { "x": 0.05, "y": 0.8, "w": 0.4, "h": 0.08 },
       "zIndex": 2
+    },
+    {
+      "template": "lower_third",
+      "startFrame": 100,
+      "durationInFrames": 120,
+      "props": {
+        "name": "Jane Smith",
+        "title": "Senior Engineer",
+        "accentColor": "#FFD700",
+        "style": "slide",
+        "fontSize": 36,
+        "color": "#FFFFFF"
+      },
+      "bounds": { "x": 0.03, "y": 0.78, "w": 0.35, "h": 0.12 },
+      "zIndex": 3
+    },
+    {
+      "template": "lower_third",
+      "startFrame": 240,
+      "durationInFrames": 90,
+      "props": {
+        "name": "Topic: Architecture",
+        "accentColor": "#4ADE80",
+        "style": "fade",
+        "fontSize": 30,
+        "color": "#FFFFFF"
+      },
+      "bounds": { "x": 0.03, "y": 0.82, "w": 0.3, "h": 0.08 },
+      "zIndex": 3
+    },
+    {
+      "template": "listicle",
+      "startFrame": 120,
+      "durationInFrames": 150,
+      "props": {
+        "items": ["React Components", "Spring Animations", "Staggered Reveals"],
+        "style": "pop",
+        "listStyle": "numbered",
+        "staggerDelay": 15,
+        "fontSize": 32,
+        "color": "#FFFFFF",
+        "accentColor": "#FFD700"
+      },
+      "bounds": { "x": 0.1, "y": 0.2, "w": 0.4, "h": 0.4 },
+      "zIndex": 2
+    },
+    {
+      "template": "listicle",
+      "startFrame": 300,
+      "durationInFrames": 120,
+      "props": {
+        "items": ["Step One", "Step Two", "Step Three", "Step Four"],
+        "style": "slide",
+        "listStyle": "bullet",
+        "staggerDelay": 12,
+        "fontSize": 28,
+        "color": "#FFFFFF",
+        "accentColor": "#4ADE80"
+      },
+      "bounds": { "x": 0.1, "y": 0.25, "w": 0.35, "h": 0.45 },
+      "zIndex": 2
+    },
+    {
+      "template": "data_animation",
+      "startFrame": 180,
+      "durationInFrames": 90,
+      "props": {
+        "style": "counter",
+        "value": 1250,
+        "label": "Active Users",
+        "startValue": 0,
+        "suffix": "",
+        "prefix": "",
+        "fontSize": 64,
+        "color": "#FFFFFF",
+        "accentColor": "#FFD700"
+      },
+      "bounds": { "x": 0.15, "y": 0.3, "w": 0.3, "h": 0.2 },
+      "zIndex": 2
+    },
+    {
+      "template": "data_animation",
+      "startFrame": 350,
+      "durationInFrames": 120,
+      "props": {
+        "style": "stat-callout",
+        "value": 95.7,
+        "label": "Customer Satisfaction",
+        "startValue": 0,
+        "suffix": "%",
+        "delta": 12,
+        "fontSize": 56,
+        "color": "#FFFFFF",
+        "accentColor": "#FFD700"
+      },
+      "bounds": { "x": 0.1, "y": 0.25, "w": 0.4, "h": 0.25 },
+      "zIndex": 2
+    },
+    {
+      "template": "data_animation",
+      "startFrame": 480,
+      "durationInFrames": 120,
+      "props": {
+        "style": "bar",
+        "value": 0,
+        "label": "Revenue by Region",
+        "items": [
+          { "label": "North America", "value": 450 },
+          { "label": "Europe", "value": 320 },
+          { "label": "Asia Pacific", "value": 280 }
+        ],
+        "suffix": "M",
+        "prefix": "$",
+        "fontSize": 40,
+        "color": "#FFFFFF",
+        "accentColor": "#FFD700"
+      },
+      "bounds": { "x": 0.1, "y": 0.2, "w": 0.5, "h": 0.5 },
+      "zIndex": 2
     }
   ],
-  "colorPalette": ["#FFFFFF", "#FFD700"],
+  "colorPalette": ["#FFFFFF", "#FFD700", "#4ADE80"],
   "includeBaseVideo": false
 }

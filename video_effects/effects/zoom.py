@@ -78,18 +78,31 @@ class ZoomEffect(BaseEffect):
         """Run face detection on active ranges, with optional disk cache."""
         cache_file = os.path.join(cache_dir, "face_tracking_zoom.json") if cache_dir else None
 
-        # Try loading from cache first
+        from video_effects.helpers.face_tracking import (
+            detect_faces, smooth_data, _probe_decoded_size,
+        )
+
+        # Get decoded dimensions for cache validation
+        if video_path:
+            dec_w, dec_h = _probe_decoded_size(video_path)
+        else:
+            dec_w, dec_h = video_info.width, video_info.height
+
+        # Try loading from cache — validate dimensions match
         if cache_file and os.path.exists(cache_file):
             with open(cache_file) as f:
                 raw = json.load(f)
-            self._face_data = [tuple(row) for row in raw]
-            return
+            if isinstance(raw, dict):
+                cached_dims = raw.get("dimensions")
+                if cached_dims == [dec_w, dec_h]:
+                    self._face_data = [tuple(row) for row in raw["face_data"]]
+                    return
+                # Dimension mismatch — stale cache, regenerate
+            # Old list format — regenerate with correct dimensions
 
         if video_path is None:
             self._face_data = None
             return
-
-        from video_effects.helpers.face_tracking import detect_faces, smooth_data
 
         active_ranges = [
             (
@@ -105,11 +118,14 @@ class ZoomEffect(BaseEffect):
         smoothed = smooth_data(raw_data)
         self._face_data = [tuple(row) for row in smoothed.tolist()]
 
-        # Write cache if cache_dir provided
+        # Write cache with dimensions metadata
         if cache_file:
             os.makedirs(cache_dir, exist_ok=True)
             with open(cache_file, "w") as f:
-                json.dump(self._face_data, f)
+                json.dump({
+                    "dimensions": [dec_w, dec_h],
+                    "face_data": self._face_data,
+                }, f)
 
     def apply_frame(
         self, frame: np.ndarray, timestamp: float, context: EffectContext
@@ -118,8 +134,15 @@ class ZoomEffect(BaseEffect):
         for hold_start, hold_end, hold_zoom, hold_tracking in self._hold_intervals:
             if hold_start <= timestamp <= hold_end:
                 h, w = frame.shape[:2]
-                if hold_tracking == "center":
-                    tx, ty = w / 2, h / 2
+                if hold_tracking == "face" and self._face_data is not None:
+                    fx, fy, _, _ = self._face_data[context.frame_index]
+                    dampen = 1.0 / max(hold_zoom, 1.001)
+                    if not hasattr(self, '_damp_fx'):
+                        self._damp_fx, self._damp_fy = float(fx), float(fy)
+                    else:
+                        self._damp_fx = dampen * fx + (1.0 - dampen) * self._damp_fx
+                        self._damp_fy = dampen * fy + (1.0 - dampen) * self._damp_fy
+                    tx, ty = self._damp_fx, self._damp_fy
                 else:
                     tx, ty = w / 2, h / 2
                 sx = w / 2 - tx * hold_zoom
@@ -162,8 +185,16 @@ class ZoomEffect(BaseEffect):
 
             if params.tracking == "face" and self._face_data is not None:
                 fx, fy, _, _ = self._face_data[context.frame_index]
-                tx = self._lerp(w / 2, fx, intensity)
-                ty = self._lerp(h / 2, fy, intensity)
+                # Dampen face tracking more at higher zoom levels
+                # (prevents amplified jitter — matches reference implementation)
+                dampen = 1.0 / max(current_zoom, 1.001)
+                if not hasattr(self, '_damp_fx'):
+                    self._damp_fx, self._damp_fy = float(fx), float(fy)
+                else:
+                    self._damp_fx = dampen * fx + (1.0 - dampen) * self._damp_fx
+                    self._damp_fy = dampen * fy + (1.0 - dampen) * self._damp_fy
+                tx = self._lerp(w / 2, self._damp_fx, intensity)
+                ty = self._lerp(h / 2, self._damp_fy, intensity)
             elif params.tracking == "center":
                 tx, ty = w / 2, h / 2
             else:

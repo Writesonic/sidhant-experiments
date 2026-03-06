@@ -20,6 +20,7 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from video_effects.schemas.styles import StyleConfig, get_style
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
 
 MAX_RETRIES = 5
@@ -99,6 +100,24 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=activity_timeout,
         )
 
+        # ── Creative Designer: auto-detect or apply style ──
+        if input.style:
+            style_config = get_style(input.style).config.model_dump()
+            style_preset = get_style(input.style)
+            workflow.logger.info("Using explicit style: %s", input.style)
+        else:
+            style_config = await workflow.execute_child_workflow(
+                "CreativeDesignerWorkflow",
+                {
+                    "transcript": transcript_result["transcript"],
+                    "video_duration": video_info["duration"],
+                    "video_fps": video_info.get("fps", 30),
+                },
+                id=f"{workflow.info().workflow_id}/creative-designer",
+            )
+            style_preset = None
+            workflow.logger.info("Creative designer returned style config")
+
         # ── G3-G5 loop: parse → validate → approve (retries on rejection) ──
         rejection_feedback = ""
         for attempt in range(MAX_RETRIES):
@@ -107,6 +126,8 @@ class VideoEffectsWorkflow:
                 "transcript": transcript_result["transcript"],
                 "segments": transcript_result["segments"],
                 "duration": video_info["duration"],
+                "style_config": style_config,
+                "dev_mode": input.dev_mode,
             }
             if rejection_feedback:
                 parse_input["feedback"] = rejection_feedback
@@ -162,6 +183,40 @@ class VideoEffectsWorkflow:
             )
 
         effects = timeline.get("effects", [])
+
+        # Inject color grading from style if applicable
+        grading_preset = ""
+        grading_intensity = 0.0
+        if style_preset:
+            grading_preset = style_preset.color_grading_preset
+            grading_intensity = style_preset.color_grading_intensity
+        elif style_config:
+            # Reverse-lookup preset from config to get grading info
+            from video_effects.schemas.styles import STYLE_PRESETS
+            for sp in STYLE_PRESETS.values():
+                if sp.config.font_import == style_config.get("font_import", ""):
+                    grading_preset = sp.color_grading_preset
+                    grading_intensity = sp.color_grading_intensity
+                    break
+
+        if grading_preset and grading_intensity > 0:
+            duration = video_info.get("duration", 0)
+            effects.append({
+                "effect_type": "color_change",
+                "start_time": 0,
+                "end_time": duration,
+                "confidence": 1.0,
+                "verbal_cue": f"Style: {grading_preset} color grading",
+                "color_params": {
+                    "preset": grading_preset,
+                    "intensity": grading_intensity,
+                },
+            })
+            workflow.logger.info(
+                "Injected %s color grading at %.0f%% intensity from style",
+                grading_preset, grading_intensity * 100,
+            )
+
         if not effects:
             return VideoEffectsOutput(
                 output_video=video_path,
@@ -231,7 +286,9 @@ class VideoEffectsWorkflow:
                 transcript=transcript_result["transcript"],
                 segments=transcript_result["segments"],
                 effects=effects,
-                style_hint=input.motion_graphics_style,
+                style_hint=input.style,
+                style_config=style_config,
+                style_preset=style_preset,
                 temp_dir=temp_dir,
                 auto_approve=input.auto_approve,
                 activity_timeout=activity_timeout,
@@ -256,6 +313,8 @@ class VideoEffectsWorkflow:
         segments: list,
         effects: list,
         style_hint: str,
+        style_config: dict | None = None,
+        style_preset: object | None = None,
         temp_dir: str,
         auto_approve: bool,
         activity_timeout: timedelta,
@@ -292,6 +351,7 @@ class VideoEffectsWorkflow:
             plan_input = {
                 "spatial_context": spatial_context,
                 "style_hint": style_hint,
+                "style_config": style_config,
                 "video_fps": fps,
             }
             if mg_feedback:

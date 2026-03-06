@@ -16,6 +16,7 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 
 from video_effects.config import settings
+from video_effects.schemas.styles import STYLE_PRESETS
 from video_effects.schemas.workflow import VideoEffectsInput
 
 
@@ -154,6 +155,8 @@ async def run_workflow(args) -> None:
         output_video=os.path.abspath(args.output),
         auto_approve=args.auto_approve,
         enable_motion_graphics=args.motion_graphics,
+        style=args.style,
+        dev_mode=args.dev,
     )
 
     print(f"Starting Video Effects workflow: {workflow_id}")
@@ -314,6 +317,17 @@ def main():
         "--motion-graphics", "--mg",
         action="store_true",
         help="Enable Remotion motion graphics overlay",
+    )
+    run_parser.add_argument(
+        "--style", "-s",
+        default="",
+        choices=list(STYLE_PRESETS.keys()),
+        help="Style preset (default: auto-detect from transcript)",
+    )
+    run_parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Dev mode: effects triggered by explicit verbal commands instead of inferred",
     )
 
     args = parser.parse_args()

@@ -6,6 +6,7 @@ No dependency on cv_experiments/.
 
 import logging
 import os
+import re
 import subprocess
 
 import mediapipe as mp
@@ -20,7 +21,12 @@ _DEFAULT_FACE = (0, 0, 100, 100)  # placeholder, overwritten per-video
 
 
 def _probe_video(video_path: str) -> tuple[int, int, float]:
-    """Get width, height, fps via ffprobe."""
+    """Get width, height, fps via ffprobe.
+
+    NOTE: width/height are coded stream dimensions and may not match the
+    actual decoded frame size when the video has rotation metadata.
+    Use _probe_decoded_size() for the real output dimensions.
+    """
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -38,6 +44,21 @@ def _probe_video(video_path: str) -> tuple[int, int, float]:
     else:
         fps = float(fps_str)
     return w, h, fps
+
+
+def _probe_decoded_size(video_path: str) -> tuple[int, int]:
+    """Get actual frame dimensions after ffmpeg autorotate."""
+    cmd = [
+        "ffmpeg", "-i", video_path, "-frames:v", "1",
+        "-vf", "showinfo", "-f", "null", "-",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    match = re.search(r"s:(\d+)x(\d+)", result.stderr)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    # Fallback to ffprobe coded dimensions
+    w, h, _ = _probe_video(video_path)
+    return w, h
 
 
 def detect_faces(
@@ -65,7 +86,8 @@ def detect_faces(
     if stride is None:
         stride = settings.FACE_DETECTION_STRIDE
 
-    w, h, fps = _probe_video(video_path)
+    _, _, fps = _probe_video(video_path)
+    w, h = _probe_decoded_size(video_path)
     default = (w // 2, h // 2, 100, 100)
     data: list[tuple[int, int, int, int]] = [default] * total_frames
     frame_size = w * h * 3

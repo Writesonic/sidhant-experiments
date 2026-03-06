@@ -22,12 +22,29 @@ export interface ComponentSpec {
   zIndex: number;
 }
 
+export interface FontWeights {
+  heading: string;
+  body: string;
+  emphasis: string;
+  marker: string;
+}
+
+export interface StyleConfig {
+  font_family: string;
+  font_import: string;
+  font_weights_to_load: string[];
+  palette: string[];
+  text_shadow: string;
+  font_weights: FontWeights;
+}
+
 export interface CompositionPlan {
   components: ComponentSpec[];
   colorPalette: string[];
   includeBaseVideo: boolean;
   baseVideoPath?: string;
   faceDataPath?: string;
+  styleConfig?: StyleConfig;
   /** Passed from Python to size the composition dynamically. */
   durationInFrames?: number;
   fps?: number;
@@ -42,4 +59,40 @@ export interface AnimatedTitleProps {
   fontSize?: number;
   color?: string;
   fontWeight?: string;
+}
+
+export interface LowerThirdProps {
+  name: string;
+  title?: string;
+  accentColor?: string;
+  style?: "slide" | "fade";
+  position: NormalizedRect;
+  fontSize?: number;
+  color?: string;
+}
+
+export interface ListicleProps {
+  items: string[];
+  style?: "pop" | "slide";
+  listStyle?: "numbered" | "bullet" | "none";
+  position: NormalizedRect;
+  staggerDelay?: number;
+  fontSize?: number;
+  color?: string;
+  accentColor?: string;
+}
+
+export interface DataAnimationProps {
+  style: "counter" | "stat-callout" | "bar";
+  value: number;
+  label: string;
+  position: NormalizedRect;
+  startValue?: number;
+  suffix?: string;
+  prefix?: string;
+  delta?: number;
+  items?: { label: string; value: number }[];
+  fontSize?: number;
+  color?: string;
+  accentColor?: string;
 }

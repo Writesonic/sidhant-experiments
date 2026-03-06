@@ -8,7 +8,8 @@ class VideoEffectsInput(BaseModel):
     output_video: str = Field(description="Path for output video file")
     auto_approve: bool = Field(False, description="Skip CLI approval step")
     enable_motion_graphics: bool = Field(False, description="Enable Remotion motion graphics overlay")
-    motion_graphics_style: str = Field("", description="Style hint for motion graphics planning")
+    style: str = Field("", description="Style preset name (empty = auto-detect via creative designer)")
+    dev_mode: bool = Field(False, description="Dev mode: effects triggered by explicit verbal commands")
 
 
 class VideoEffectsOutput(BaseModel):

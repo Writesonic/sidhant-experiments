@@ -17,6 +17,7 @@ from video_effects.schemas.mg_templates import (
     get_available_templates,
     load_guidance,
 )
+from video_effects.schemas.styles import STYLE_PRESETS, StyleConfig, StylePreset
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,52 @@ def _render_template_section(spec: MGTemplateSpec) -> str:
     return "\n".join(lines)
 
 
-def build_mg_system_prompt() -> str:
-    """Assemble the motion-graphics planner prompt from base + implemented templates."""
+def _build_style_guide(style_config: dict | None) -> str:
+    """Build the style guide section for the MG planner prompt."""
+    if not style_config:
+        return ""
+
+    # Try to find matching preset for guidance
+    preset = None
+    font_import = style_config.get("font_import", "")
+    if font_import:
+        for sp in STYLE_PRESETS.values():
+            if sp.config.font_import == font_import:
+                preset = sp
+                break
+
+    palette = style_config.get("palette", [])
+    palette_desc = ""
+    if len(palette) >= 3:
+        palette_desc = f"{palette[0]} (text), {palette[1]} (secondary), {palette[2]} (accent)"
+    elif palette:
+        palette_desc = ", ".join(palette)
+
+    lines = ["## Style Guide\n"]
+    if preset:
+        lines.append(f"**Style: {preset.display_name}**\n")
+
+    if palette_desc:
+        lines.append(f"**Color palette**: Use ONLY these colors: {palette_desc}")
+    if preset:
+        if preset.preferred_animations:
+            lines.append(f"**Animations**: Prefer {', '.join(preset.preferred_animations)}.")
+        if preset.avoided_animations:
+            lines.append(f"NEVER use {', '.join(preset.avoided_animations)}.")
+        lo, hi = preset.density_range
+        lines.append(f"**Density**: {preset.density_label} — target {lo}-{hi} overlays per 60 seconds.")
+        if preset.template_preferences:
+            lines.append(f"**Preferred templates**: {', '.join(preset.template_preferences)}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_mg_system_prompt(style_config: dict | None = None) -> str:
+    """Assemble the motion-graphics planner prompt from base + style + templates."""
     base = (_PROMPT_DIR / "plan_motion_graphics_base.md").read_text()
+
+    style_guide = _build_style_guide(style_config)
 
     templates = get_available_templates()
     if not templates:
@@ -82,7 +126,7 @@ def build_mg_system_prompt() -> str:
             parts.append(_render_template_section(spec))
         section = "\n".join(parts)
 
-    return base.replace("{TEMPLATES}", section)
+    return base.replace("{STYLE_GUIDE}", style_guide).replace("{TEMPLATES}", section)
 
 
 def _validate_props(
@@ -107,7 +151,13 @@ def _validate_props(
             issues.append(f"Dropped unknown template '{tpl_name}' — not in registry")
             continue
 
-        props = comp.get("props", {})
+        raw_props = comp.get("props", {})
+        if not isinstance(raw_props, dict):
+            issues.append(
+                f"[{tpl_name}] Expected props object, got {type(raw_props).__name__} — using defaults"
+            )
+            raw_props = {}
+        props = dict(raw_props)
 
         for p in spec.props:
             if p.name not in props:
@@ -136,6 +186,24 @@ def _validate_props(
                     if p.type == "int":
                         val = int(val)
                     props[p.name] = val
+
+                # Validate list type (list of strings, max_value = max length)
+                if p.type == "list":
+                    if isinstance(val, list):
+                        max_len = int(p.max_value) if p.max_value is not None else len(val)
+                        if len(val) > max_len:
+                            issues.append(
+                                f"[{tpl_name}] Truncated {p.name} from {len(val)} to {max_len} items"
+                            )
+                            val = val[:max_len]
+                        props[p.name] = val
+                    else:
+                        issues.append(f"[{tpl_name}] Expected list for {p.name}, got {type(val).__name__}")
+
+                # Validate json type (list of objects, skip deeper validation)
+                if p.type == "json":
+                    if not isinstance(val, list):
+                        issues.append(f"[{tpl_name}] Expected list for {p.name}, got {type(val).__name__}")
 
                 # Validate literal choices
                 if p.choices and val not in p.choices:
@@ -189,7 +257,12 @@ def build_remotion_context(input_data: dict) -> dict:
     face_data = None
     if os.path.exists(face_data_path):
         with open(face_data_path) as f:
-            face_data = json.load(f)
+            raw = json.load(f)
+        # Handle both new dict format and old list format
+        if isinstance(raw, dict):
+            face_data = raw.get("face_data", [])
+        else:
+            face_data = raw
         logger.info("Loaded face tracking data: %d frames", len(face_data))
 
     # Compute face windows (time-windowed averages)
@@ -300,10 +373,11 @@ def plan_motion_graphics(input_data: dict) -> dict:
     """
     context = input_data["spatial_context"]
     style_hint = input_data.get("style_hint", "")
+    style_config = input_data.get("style_config")
     feedback = input_data.get("feedback", "")
     fps = input_data.get("video_fps", 30)
 
-    system_prompt = build_mg_system_prompt()
+    system_prompt = build_mg_system_prompt(style_config=style_config)
 
     # Build user message
     lines = []
@@ -403,6 +477,9 @@ def plan_motion_graphics(input_data: dict) -> dict:
         "faceDataPath": context.get("face_data_path", ""),
     }
 
+    if style_config:
+        composition_plan["styleConfig"] = style_config
+
     return {
         "composition_plan": composition_plan,
         "raw_plan": raw_plan,
@@ -438,8 +515,12 @@ def _validate_plan(
         if comp["end_time"] <= comp["start_time"]:
             comp["end_time"] = comp["start_time"] + 0.5
 
-    # Check max 2 concurrent (excluding progress_bar)
-    non_bar = [c for c in components if c["template"] != "progress_bar"]
+    # Check max 2 concurrent (excluding edge-aligned templates like progress_bar)
+    edge_aligned_templates = {
+        name for name, spec in MG_TEMPLATE_REGISTRY.items()
+        if spec.spatial.edge_aligned
+    }
+    non_bar = [c for c in components if c["template"] not in edge_aligned_templates]
     to_remove = set()
     for i, a in enumerate(non_bar):
         concurrent = []

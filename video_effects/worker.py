@@ -12,7 +12,9 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
 from video_effects.activities import ALL_VIDEO_EFFECTS_ACTIVITIES
+from video_effects.activities.creative import design_style
 from video_effects.config import settings
+from video_effects.creative_workflow import CreativeDesignerWorkflow
 from video_effects.workflow import VideoEffectsWorkflow
 
 
@@ -32,8 +34,8 @@ async def main():
         worker = Worker(
             client,
             task_queue=settings.TASK_QUEUE,
-            workflows=[VideoEffectsWorkflow],
-            activities=ALL_VIDEO_EFFECTS_ACTIVITIES,
+            workflows=[VideoEffectsWorkflow, CreativeDesignerWorkflow],
+            activities=[*ALL_VIDEO_EFFECTS_ACTIVITIES, design_style],
             activity_executor=executor,
         )
 

@@ -1,8 +1,12 @@
+import logging
+
 import numpy as np
 import cv2
 
 from video_effects.effects.base import BaseEffect, EffectContext
 from video_effects.schemas.effects import EffectCue, VideoInfo
+
+logger = logging.getLogger(__name__)
 
 
 class BlurEffect(BaseEffect):
@@ -11,6 +15,8 @@ class BlurEffect(BaseEffect):
     def __init__(self):
         super().__init__()
         self._segmenter = None
+        self._face_detector = None
+        self._face_detector_backend: str | None = None
         self._video_info: VideoInfo | None = None
 
     def setup(self, video_info: VideoInfo, effect_cues: list[EffectCue],
@@ -25,13 +31,61 @@ class BlurEffect(BaseEffect):
         ]
         if bg_cues:
             self._setup_segmentation()
+        face_cues = [
+            c for c in effect_cues
+            if c.blur_params and c.blur_params.blur_type == "face_pixelate"
+        ]
+        if face_cues:
+            self._setup_face_detection()
+
+    def _get_mediapipe_solutions(self):
+        """Return MediaPipe legacy solutions module if available."""
+        try:
+            import mediapipe as mp
+        except Exception:
+            return None
+        return getattr(mp, "solutions", None)
 
     def _setup_segmentation(self) -> None:
         """Initialize MediaPipe selfie segmentation for background blur."""
-        import mediapipe as mp
-        self._segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(
+        solutions = self._get_mediapipe_solutions()
+        if solutions is None or not hasattr(solutions, "selfie_segmentation"):
+            logger.warning(
+                "MediaPipe selfie segmentation unavailable (mp.solutions missing); "
+                "background blur will be skipped."
+            )
+            self._segmenter = None
+            return
+
+        self._segmenter = solutions.selfie_segmentation.SelfieSegmentation(
             model_selection=1  # landscape model (faster)
         )
+
+    def _setup_face_detection(self) -> None:
+        """Initialize face detector with MediaPipe (preferred) or OpenCV fallback."""
+        solutions = self._get_mediapipe_solutions()
+        if solutions is not None and hasattr(solutions, "face_detection"):
+            self._face_detector = solutions.face_detection.FaceDetection(
+                model_selection=1,
+                min_detection_confidence=0.5,
+            )
+            self._face_detector_backend = "mediapipe"
+            return
+
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        cascade = cv2.CascadeClassifier(cascade_path)
+        if cascade.empty():
+            logger.warning(
+                "No face detector available (MediaPipe solutions missing and "
+                "OpenCV Haar cascade unavailable); face_pixelate will be skipped."
+            )
+            self._face_detector = None
+            self._face_detector_backend = None
+            return
+
+        self._face_detector = cascade
+        self._face_detector_backend = "opencv"
+        logger.info("Using OpenCV Haar cascade fallback for face_pixelate")
 
     def apply_frame(
         self, frame: np.ndarray, timestamp: float, context: EffectContext
@@ -80,23 +134,39 @@ class BlurEffect(BaseEffect):
 
     def _apply_face_pixelate(self, frame: np.ndarray, radius: float) -> np.ndarray:
         """Detect face and pixelate the region."""
-        import mediapipe as mp
+        if self._face_detector is None:
+            self._setup_face_detection()
+            if self._face_detector is None:
+                return frame
 
         h, w = frame.shape[:2]
-        with mp.solutions.face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.5
-        ) as face_det:
-            results = face_det.process(frame)
+        boxes: list[tuple[int, int, int, int]] = []
 
-        if not results.detections:
+        if self._face_detector_backend == "mediapipe":
+            # MediaPipe face detector expects RGB input.
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self._face_detector.process(rgb)
+            detections = getattr(results, "detections", None) or []
+            for detection in detections:
+                bbox = detection.location_data.relative_bounding_box
+                x1 = max(0, int(bbox.xmin * w))
+                y1 = max(0, int(bbox.ymin * h))
+                bw = int(bbox.width * w)
+                bh = int(bbox.height * h)
+                boxes.append((x1, y1, bw, bh))
+        elif self._face_detector_backend == "opencv":
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            detected = self._face_detector.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(30, 30),
+            )
+            boxes.extend((int(x), int(y), int(bw), int(bh)) for x, y, bw, bh in detected)
+        else:
             return frame
 
-        for detection in results.detections:
-            bbox = detection.location_data.relative_bounding_box
-            x1 = max(0, int(bbox.xmin * w))
-            y1 = max(0, int(bbox.ymin * h))
-            bw = int(bbox.width * w)
-            bh = int(bbox.height * h)
+        for x1, y1, bw, bh in boxes:
             x2, y2 = min(w, x1 + bw), min(h, y1 + bh)
 
             if x2 <= x1 or y2 <= y1:
