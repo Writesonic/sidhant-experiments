@@ -93,6 +93,8 @@ class ProcessToS3Request(BaseModel):
     webhook_secret: str | None = Field(None, alias="_webhook_secret", description="HMAC-SHA256 signing secret")
     task_token: str | None = Field(None, alias="_task_token", description="Base64-encoded Temporal task token")
     output_s3_uri: str | None = Field(None, alias="_output_s3_uri", description="Full s3:// URI to include in webhook result")
+    workflow_id: str | None = Field(None, alias="_workflow_id", description="Temporal workflow ID for cost tracking")
+    user_id: str | None = Field(None, alias="_user_id", description="User ID for cost tracking")
 
     model_config = {"populate_by_name": True}
 
@@ -101,6 +103,7 @@ class ProcessToS3Response(BaseModel):
     status: str = "completed"
     output_s3_key: str
     gpu_tier: str | None = None
+    processing_seconds: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +390,7 @@ def process_to_s3(req: ProcessToS3Request) -> ProcessToS3Response:
     has_webhook = req.webhook_url and req.webhook_secret and req.task_token
 
     try:
+        t_gpu = time.monotonic()
         _result_bytes, tier_used = _call_with_fallback(
             input_bytes=input_bytes,
             output_filename=output_filename,
@@ -395,20 +399,31 @@ def process_to_s3(req: ProcessToS3Request) -> ProcessToS3Response:
             output_s3_key=req.output_s3_key,
             **req.kwargs,
         )
+        processing_seconds = round(time.monotonic() - t_gpu, 3)
     except Exception as e:
         if has_webhook:
             _send_webhook_completion(req.webhook_url, req.webhook_secret, req.task_token, error=str(e))
             return ProcessToS3Response(status="completed", output_s3_key=req.output_s3_key, gpu_tier=None)
         raise
 
+    # Map internal tier name to GPU model name for cost tracking
+    gpu_tier_name = GPU_TIERS.get(tier_used, {}).get("gpu", "L4") if tier_used else "L4"
+
     if has_webhook:
-        result_payload = {"output_path": req.output_s3_uri or f"s3://unknown/{req.output_s3_key}"}
+        result_payload = {
+            "output_path": req.output_s3_uri or f"s3://unknown/{req.output_s3_key}",
+            "processing_seconds": processing_seconds,
+            "gpu_tier": gpu_tier_name,
+            "_workflow_id": req.workflow_id,
+            "_user_id": req.user_id,
+        }
         _send_webhook_completion(req.webhook_url, req.webhook_secret, req.task_token, result=result_payload)
 
     return ProcessToS3Response(
         status="completed",
         output_s3_key=req.output_s3_key,
         gpu_tier=tier_used,
+        processing_seconds=processing_seconds,
     )
 
 
