@@ -22,7 +22,7 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
-  const { left, top, scale, maxWidth } = useFaceAwareLayout(position, anchor);
+  const { left, top, scale, maxWidth, maxHeight } = useFaceAwareLayout(position, anchor);
   const scaledFontSize = fontSize * scale;
   const style_ = useStyle();
   const resolvedWeight = fontWeight ?? style_.font_weights.heading;
@@ -65,6 +65,7 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
           left,
           top,
           maxWidth,
+          maxHeight,
           fontSize: scaledFontSize,
           color,
           fontWeight: resolvedWeight,
@@ -90,6 +91,7 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
           left,
           top,
           maxWidth,
+          maxHeight,
           fontSize: scaledFontSize,
           color,
           fontWeight: resolvedWeight,
@@ -113,6 +115,7 @@ export const AnimatedTitle: React.FC<AnimatedTitleProps> = ({
         left: left + translateX,
         top: top + translateY,
         maxWidth,
+        maxHeight,
         fontSize: scaledFontSize,
         color,
         fontWeight: resolvedWeight,

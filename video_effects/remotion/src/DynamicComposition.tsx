@@ -39,12 +39,28 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
       pending++;
       fetch(faceDataPath)
         .then((r) => r.json())
-        .then((data: number[][]) => {
-          const frames: FaceFrame[] = data.map((d) => ({
-            cx: d[0],
-            cy: d[1],
-            fw: d[2],
-            fh: d[3],
+        .then((raw: unknown) => {
+          // Handle both dict format and old bare-array format
+          let faceArray: number[][];
+          let normW = 1920;
+          let normH = 1080;
+          if (Array.isArray(raw)) {
+            faceArray = raw;
+          } else {
+            const obj = raw as Record<string, unknown>;
+            faceArray = (obj.face_data as number[][]) || [];
+            const dims = obj.dimensions as number[] | undefined;
+            if (dims && dims.length >= 2) {
+              normW = dims[0];
+              normH = dims[1];
+            }
+          }
+
+          const frames: FaceFrame[] = faceArray.map((d) => ({
+            cx: d[0] / normW,
+            cy: d[1] / normH,
+            fw: d[2] / normW,
+            fh: d[3] / normH,
           }));
           setFaceData(frames);
           maybeFinish();
@@ -97,13 +113,26 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
             {sorted.map((comp, i) => {
               const Component = ComponentRegistry[comp.template];
               if (!Component) return null;
+              const b = comp.bounds;
+              const clipTop = b.y * 100;
+              const clipRight = (1 - b.x - b.w) * 100;
+              const clipBottom = (1 - b.y - b.h) * 100;
+              const clipLeft = b.x * 100;
               return (
                 <Sequence
                   key={i}
                   from={comp.startFrame}
                   durationInFrames={comp.durationInFrames}
                 >
-                  <Component {...comp.props} position={comp.bounds} anchor={comp.anchor} />
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      clipPath: `inset(${clipTop}% ${clipRight}% ${clipBottom}% ${clipLeft}%)`,
+                    }}
+                  >
+                    <Component {...comp.props} position={comp.bounds} anchor={comp.anchor} />
+                  </div>
                 </Sequence>
               );
             })}

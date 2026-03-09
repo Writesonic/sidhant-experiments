@@ -21,7 +21,17 @@ export const StyleProvider: React.FC<{
   styleConfig?: StyleConfig;
   children: React.ReactNode;
 }> = ({ styleConfig, children }) => {
-  const value = styleConfig ?? DEFAULT_STYLE;
+  const value: StyleConfig = styleConfig
+    ? {
+        ...DEFAULT_STYLE,
+        ...styleConfig,
+        font_weights: { ...DEFAULT_STYLE.font_weights, ...styleConfig.font_weights },
+        palette:
+          styleConfig.palette && styleConfig.palette.length >= 3
+            ? styleConfig.palette
+            : DEFAULT_STYLE.palette,
+      }
+    : DEFAULT_STYLE;
   return React.createElement(StyleContext.Provider, { value }, children);
 };
 

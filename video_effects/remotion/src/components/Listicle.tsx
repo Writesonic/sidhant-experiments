@@ -23,7 +23,7 @@ export const Listicle: React.FC<ListicleProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
-  const { left, top, scale, maxWidth } = useFaceAwareLayout(position, anchor);
+  const { left, top, scale, maxWidth, maxHeight } = useFaceAwareLayout(position, anchor);
   const scaledFontSize = fontSize * scale;
   const s = useStyle();
 
@@ -50,6 +50,7 @@ export const Listicle: React.FC<ListicleProps> = ({
         left,
         top,
         maxWidth,
+        maxHeight,
         display: "flex",
         flexDirection: "column",
         gap: scaledFontSize * 0.5,

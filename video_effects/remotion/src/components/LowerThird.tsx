@@ -22,7 +22,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
-  const { left, top, scale, maxWidth } = useFaceAwareLayout(position, anchor);
+  const { left, top, scale, maxWidth, maxHeight } = useFaceAwareLayout(position, anchor);
   const scaledFontSize = fontSize * scale;
   const s = useStyle();
 
@@ -58,6 +58,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
           left,
           top,
           maxWidth,
+          maxHeight,
           display: "flex",
           flexDirection: "row",
           alignItems: "stretch",
@@ -127,6 +128,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
         left,
         top,
         maxWidth,
+        maxHeight,
         display: "flex",
         flexDirection: "row",
         alignItems: "stretch",

@@ -27,7 +27,7 @@ export const DataAnimation: React.FC<DataAnimationProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
-  const { left, top, scale, maxWidth } = useFaceAwareLayout(position, anchor);
+  const { left, top, scale, maxWidth, maxHeight } = useFaceAwareLayout(position, anchor);
   const scaledFontSize = fontSize * scale;
   const s = useStyle();
 
@@ -57,6 +57,7 @@ export const DataAnimation: React.FC<DataAnimationProps> = ({
           left,
           top,
           maxWidth,
+          maxHeight,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -118,6 +119,7 @@ export const DataAnimation: React.FC<DataAnimationProps> = ({
           left,
           top,
           maxWidth,
+          maxHeight,
           display: "flex",
           flexDirection: "column",
           alignItems: "flex-start",
@@ -183,6 +185,7 @@ export const DataAnimation: React.FC<DataAnimationProps> = ({
         left,
         top,
         maxWidth,
+        maxHeight,
         display: "flex",
         flexDirection: "column",
         gap: barHeight * 0.6,

@@ -60,6 +60,7 @@ export function linearScale(
 
 /** Convert a hex color + opacity to an rgba() string. */
 export function colorWithOpacity(hex: string, opacity: number): string {
+  if (!hex || typeof hex !== "string") return `rgba(255,255,255,${opacity})`;
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
@@ -68,6 +69,8 @@ export function colorWithOpacity(hex: string, opacity: number): string {
 
 /** Linearly interpolate between two hex colors. */
 export function lerpColor(hex1: string, hex2: string, t: number): string {
+  if (!hex1 || typeof hex1 !== "string") hex1 = "#FFFFFF";
+  if (!hex2 || typeof hex2 !== "string") hex2 = "#000000";
   const r1 = parseInt(hex1.slice(1, 3), 16);
   const g1 = parseInt(hex1.slice(3, 5), 16);
   const b1 = parseInt(hex1.slice(5, 7), 16);

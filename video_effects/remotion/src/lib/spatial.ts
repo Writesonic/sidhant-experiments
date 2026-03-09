@@ -196,8 +196,8 @@ export function useFaceAwareLayout(
     left: adjustedX * width,
     top: adjustedY * height,
     scale: currentScale * adjustedScale,
-    maxWidth: (EDGE_MAX - adjustedX) * width,
-    maxHeight: (EDGE_MAX - adjustedY) * height,
+    maxWidth: compW * width,
+    maxHeight: compH * height,
   };
 }
 
