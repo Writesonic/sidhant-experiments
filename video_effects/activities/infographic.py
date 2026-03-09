@@ -113,7 +113,7 @@ def plan_infographics(input_data: dict) -> dict:
             safe_labels = [s["label"] for s in fw.get("safe_regions", [])]
             lines.append(
                 f"- [{fw['start_time']:.1f}s - {fw['end_time']:.1f}s] "
-                f"face at ({fr['x']:.2f}, {fr['y']:.2f}) safe: {', '.join(safe_labels) or 'none'}"
+                f"face at ({fr['x']:.2f}, {fr['y']:.2f}, {fr['w']:.2f}x{fr['h']:.2f}) safe: {', '.join(safe_labels) or 'none'}"
             )
         lines.append("")
 

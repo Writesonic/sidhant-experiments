@@ -8,7 +8,7 @@ from pathlib import Path
 
 from temporalio import activity
 
-from video_effects.helpers.llm import call_structured, load_prompt
+from video_effects.helpers.llm import call_structured 
 from video_effects.helpers.remotion import composite_overlay, render_media, render_still
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
 from video_effects.schemas.mg_templates import (
@@ -17,7 +17,7 @@ from video_effects.schemas.mg_templates import (
     get_available_templates,
     load_guidance,
 )
-from video_effects.schemas.styles import StyleConfig, StylePreset, get_style
+from video_effects.schemas.styles import get_style
 
 logger = logging.getLogger(__name__)
 
@@ -520,79 +520,205 @@ def _rect_overlap_fraction(a: dict, b: dict) -> float:
     return (ox * oy) / a_area
 
 
-def _find_best_safe_region(
-    comp_w: float, comp_h: float, safe_regions: list[dict]
-) -> tuple[float, float, float, float] | None:
-    """Pick the safe region with most area that fits the component.
+_FACE_PADDING = 0.1  # 10% normalized padding around face region
 
-    Returns (x, y, w, h) centered within the chosen region, or None.
+# Safe frame used by free-rectangle tiling — 2% inset on all edges
+_SAFE_FRAME = {"x": 0.02, "y": 0.02, "w": 0.96, "h": 0.96}
+
+
+def _compute_free_rects(
+    frame: dict, obstacles: list[dict], min_w: float = 0.05, min_h: float = 0.03
+) -> list[dict]:
+    """Compute maximal free rectangles within *frame* after subtracting *obstacles*.
+
+    Uses the standard bin-packing split: for each obstacle that overlaps a free
+    rect, replace the free rect with up to 4 strips (top/bottom full-width,
+    left/right full-height).  Then prune rects that are fully contained within
+    another and rects smaller than *min_w* × *min_h*.
     """
-    # First try regions that fit the component as-is
-    fitting = [r for r in safe_regions if r.get("w", 0) >= comp_w and r.get("h", 0) >= comp_h]
+    free_list = [dict(frame)]
+
+    for obs in obstacles:
+        ox1 = obs["x"]
+        oy1 = obs["y"]
+        ox2 = ox1 + obs["w"]
+        oy2 = oy1 + obs["h"]
+        next_free: list[dict] = []
+        for r in free_list:
+            rx1 = r["x"]
+            ry1 = r["y"]
+            rx2 = rx1 + r["w"]
+            ry2 = ry1 + r["h"]
+
+            # No overlap — keep as-is
+            if ox1 >= rx2 or ox2 <= rx1 or oy1 >= ry2 or oy2 <= ry1:
+                next_free.append(r)
+                continue
+
+            # Top strip (full width of r, above obstacle)
+            if oy1 > ry1:
+                next_free.append({"x": rx1, "y": ry1, "w": r["w"], "h": oy1 - ry1})
+            # Bottom strip (full width)
+            if oy2 < ry2:
+                next_free.append({"x": rx1, "y": oy2, "w": r["w"], "h": ry2 - oy2})
+            # Left strip (full height of r)
+            if ox1 > rx1:
+                next_free.append({"x": rx1, "y": ry1, "w": ox1 - rx1, "h": r["h"]})
+            # Right strip (full height)
+            if ox2 < rx2:
+                next_free.append({"x": ox2, "y": ry1, "w": rx2 - ox2, "h": r["h"]})
+
+        free_list = next_free
+
+    # Filter too-small rects
+    free_list = [r for r in free_list if r["w"] >= min_w and r["h"] >= min_h]
+
+    # Prune rects fully contained within another
+    pruned: list[dict] = []
+    for i, a in enumerate(free_list):
+        ax1, ay1 = a["x"], a["y"]
+        ax2, ay2 = ax1 + a["w"], ay1 + a["h"]
+        contained = False
+        for j, b in enumerate(free_list):
+            if i == j:
+                continue
+            if (b["x"] <= ax1 and b["y"] <= ay1
+                    and b["x"] + b["w"] >= ax2 and b["y"] + b["h"] >= ay2):
+                contained = True
+                break
+        if not contained:
+            pruned.append(a)
+
+    return pruned
+
+
+def _find_best_free_placement(
+    comp_w: float,
+    comp_h: float,
+    free_rects: list[dict],
+    original_pos: tuple[float, float],
+) -> tuple[float, float, float, float] | None:
+    """Find the best placement for a component within free rectangles.
+
+    Heuristic:
+    1. Filter rects that fit the component at full size.
+    2. Pick the one whose center is closest to *original_pos*.
+    3. If none fit full size → pick the largest free rect, shrink component
+       preserving aspect ratio.
+    4. Center component within the chosen rect.
+    5. Return (x, y, w, h) rounded to 3 decimals, or None.
+    """
+    if not free_rects:
+        return None
+
+    ox, oy = original_pos
+
+    # Full-size candidates
+    fitting = [r for r in free_rects if r["w"] >= comp_w and r["h"] >= comp_h]
     if fitting:
-        best = max(fitting, key=lambda r: r.get("w", 0) * r.get("h", 0))
-        cx = best["x"] + (best["w"] - comp_w) / 2
-        cy = best["y"] + (best["h"] - comp_h) / 2
-        return cx, cy, comp_w, comp_h
+        def _dist(r: dict) -> float:
+            cx = r["x"] + r["w"] / 2
+            cy = r["y"] + r["h"] / 2
+            return math.hypot(cx - ox, cy - oy)
+        best = min(fitting, key=_dist)
+        px = round(best["x"] + (best["w"] - comp_w) / 2, 3)
+        py = round(best["y"] + (best["h"] - comp_h) / 2, 3)
+        return px, py, round(comp_w, 3), round(comp_h, 3)
 
-    # No region fits — pick the largest and shrink component to fit
-    if safe_regions:
-        best = max(safe_regions, key=lambda r: r.get("w", 0) * r.get("h", 0))
-        new_w = min(comp_w, best.get("w", comp_w))
-        new_h = min(comp_h, best.get("h", comp_h))
-        cx = best["x"] + (best["w"] - new_w) / 2
-        cy = best["y"] + (best["h"] - new_h) / 2
-        return cx, cy, new_w, new_h
+    # No full-size fit — shrink into the largest free rect (preserve aspect ratio)
+    best = max(free_rects, key=lambda r: r["w"] * r["h"])
+    if comp_w <= 0 or comp_h <= 0:
+        return None
+    aspect = comp_w / comp_h
+    new_w = min(comp_w, best["w"])
+    new_h = new_w / aspect
+    if new_h > best["h"]:
+        new_h = best["h"]
+        new_w = new_h * aspect
+    px = round(best["x"] + (best["w"] - new_w) / 2, 3)
+    py = round(best["y"] + (best["h"] - new_h) / 2, 3)
+    return px, py, round(new_w, 3), round(new_h, 3)
 
-    return None
 
-
-def _resolve_spatial_conflicts(
+def _resolve_all_conflicts(
     components: list[dict],
+    face_windows: list[dict],
     edge_aligned_templates: set[str],
     issues: list[str],
 ) -> bool:
-    """Single pass of spatial overlap resolution. Returns True if any component was moved."""
+    """Single-pass free-rectangle tiling to resolve face and inter-component overlaps.
+
+    Process in z_index descending order so higher-priority components are placed
+    first and become obstacles for subsequent ones.
+
+    Returns True if any component was moved.
+    """
     changed = False
-    non_edge = [c for c in components if c.get("template", "") not in edge_aligned_templates]
-    for i, a in enumerate(non_edge):
-        for j, b in enumerate(non_edge):
-            if j <= i:
+    # Sort by z_index descending (highest priority placed first)
+    ordered = sorted(components, key=lambda c: c.get("z_index", 0), reverse=True)
+    # Placed component bounds with time ranges (obstacles for subsequent components)
+    placed: list[dict] = []
+
+    for comp in ordered:
+        bounds = comp.get("bounds", {})
+        bw = bounds.get("w", 0.2)
+        bh = bounds.get("h", 0.1)
+        tpl = comp.get("template", "?")
+
+        # Edge-aligned components (e.g. progress_bar) — register as obstacle, skip relocation
+        if tpl in edge_aligned_templates:
+            placed.append({
+                "x": bounds.get("x", 0), "y": bounds.get("y", 0),
+                "w": bw, "h": bh,
+                "start_time": comp["start_time"], "end_time": comp["end_time"],
+            })
+            continue
+
+        # Build obstacles: padded face rects + already-placed component rects
+        obstacles: list[dict] = []
+
+        for fw in face_windows:
+            if comp["start_time"] >= fw.get("end_time", 0) or fw.get("start_time", 0) >= comp["end_time"]:
                 continue
-            # Check time overlap
-            if a["start_time"] >= b["end_time"] or b["start_time"] >= a["end_time"]:
+            fr = fw.get("face_region", {})
+            obstacles.append({
+                "x": max(0, fr.get("x", 0) - _FACE_PADDING),
+                "y": max(0, fr.get("y", 0) - _FACE_PADDING),
+                "w": fr.get("w", 0) + _FACE_PADDING * 2,
+                "h": fr.get("h", 0) + _FACE_PADDING * 2,
+            })
+
+        for p in placed:
+            if comp["start_time"] >= p["end_time"] or p["start_time"] >= comp["end_time"]:
                 continue
-            ab = a.get("bounds", {})
-            bb = b.get("bounds", {})
-            overlap = _rect_overlap_fraction(ab, bb)
-            if overlap <= 0.10:
-                continue
-            # Shift the lower z_index component
-            if a.get("z_index", 0) <= b.get("z_index", 0):
-                target, other_bounds = a, bb
+            obstacles.append({"x": p["x"], "y": p["y"], "w": p["w"], "h": p["h"]})
+
+        # Check if current bounds overlap any obstacle
+        has_conflict = any(_rect_overlap_fraction(bounds, obs) > 0 for obs in obstacles)
+
+        if has_conflict:
+            original_cx = bounds.get("x", 0) + bw / 2
+            original_cy = bounds.get("y", 0) + bh / 2
+            free_rects = _compute_free_rects(_SAFE_FRAME, obstacles)
+            result = _find_best_free_placement(bw, bh, free_rects, (original_cx, original_cy))
+            if result:
+                new_x, new_y, new_w, new_h = result
+                bounds["x"] = new_x
+                bounds["y"] = new_y
+                bounds["w"] = new_w
+                bounds["h"] = new_h
+                changed = True
+                issues.append(f"Relocated {tpl} to free region (was conflicting)")
             else:
-                target, other_bounds = b, ab
-            tb = target.get("bounds", {})
-            ob_bottom = other_bounds.get("y", 0) + other_bounds.get("h", 0)
-            ob_top = other_bounds.get("y", 0)
-            # Try below the other component
-            if ob_bottom + tb.get("h", 0.1) <= 0.98:
-                tb["y"] = round(ob_bottom + 0.02, 3)
-            # Try above
-            elif ob_top - tb.get("h", 0.1) >= 0.02:
-                tb["y"] = round(ob_top - tb.get("h", 0.1) - 0.02, 3)
-            # Try opposite horizontal side
-            else:
-                ob_right = other_bounds.get("x", 0) + other_bounds.get("w", 0)
-                if ob_right + tb.get("w", 0.2) <= 0.98:
-                    tb["x"] = round(ob_right + 0.02, 3)
-                elif other_bounds.get("x", 0) - tb.get("w", 0.2) >= 0.02:
-                    tb["x"] = round(other_bounds.get("x", 0) - tb.get("w", 0.2) - 0.02, 3)
-            changed = True
-            issues.append(
-                f"Shifted {target.get('template', '?')} to avoid overlap with "
-                f"{(a if target is b else b).get('template', '?')}"
-            )
+                issues.append(f"Could not relocate {tpl} — no free space available")
+
+        # Register final bounds as obstacle for subsequent components
+        placed.append({
+            "x": bounds.get("x", 0), "y": bounds.get("y", 0),
+            "w": bounds.get("w", 0.2), "h": bounds.get("h", 0.1),
+            "start_time": comp["start_time"], "end_time": comp["end_time"],
+        })
+
     return changed
 
 
@@ -603,15 +729,14 @@ def _validate_plan(
 ) -> tuple[list[dict], list[str]]:
     """Validate and fix motion graphics plan.
 
-    Rules:
+    Rules (one-shot corrections):
     1. Hard bounds clamping
     2. Time clamping
     3. Template duration limits
-    4. Face overlap relocation
-    5. Concurrent count enforcement
-    6. Zoom viewport clamping
-    7. Zoom transition buffer
-    8. Multi-pass spatial conflict resolution (runs last, catches all accumulated conflicts)
+    4. Concurrent count enforcement
+    5. Zoom viewport clamping
+    6. Zoom transition buffer
+    7. Single-pass free-rectangle tiling (face + inter-component conflicts)
     """
     issues: list[str] = []
     if not components:
@@ -671,32 +796,7 @@ def _validate_plan(
                 )
                 comp["end_time"] = comp["start_time"] + max_dur
 
-    # 4. Face overlap relocation — move components away from speaker's face
-    face_windows = context.get("face_windows", [])
-    for comp in components:
-        bounds = comp.get("bounds", {})
-        bx, by, bw, bh = bounds.get("x", 0), bounds.get("y", 0), bounds.get("w", 0.2), bounds.get("h", 0.1)
-        for fw in face_windows:
-            # Check time overlap
-            if comp["start_time"] >= fw.get("end_time", 0) or fw.get("start_time", 0) >= comp["end_time"]:
-                continue
-            face_region = fw.get("face_region", {})
-            overlap = _rect_overlap_fraction(bounds, face_region)
-            if overlap > 0.05:
-                safe_regions = fw.get("safe_regions", [])
-                result = _find_best_safe_region(bw, bh, safe_regions)
-                if result:
-                    new_x, new_y, new_w, new_h = result
-                    bounds["x"] = round(new_x, 3)
-                    bounds["y"] = round(new_y, 3)
-                    bounds["w"] = round(new_w, 3)
-                    bounds["h"] = round(new_h, 3)
-                    issues.append(
-                        f"Relocated {comp.get('template', '?')} away from face at {comp['start_time']:.1f}s"
-                    )
-                break  # Only need to relocate once per component
-
-    # 5. Check max 2 concurrent (excluding edge-aligned templates like progress_bar)
+    # 4. Check max 2 concurrent (excluding edge-aligned templates like progress_bar)
     edge_aligned_templates = {
         name for name, spec in MG_TEMPLATE_REGISTRY.items()
         if spec.spatial.edge_aligned
@@ -725,7 +825,7 @@ def _validate_plan(
         dropped = {id(non_bar[i]) for i in to_remove}
         components = [c for c in components if id(c) not in dropped]
 
-    # 6. Zoom viewport clamping (before spatial resolution so shifts get caught)
+    # 5. Zoom viewport clamping (before spatial resolution so shifts get caught)
     zoom_effects = [
         e for e in context.get("opencv_effects", [])
         if e.get("effect_type") == "zoom"
@@ -756,7 +856,7 @@ def _validate_plan(
                     if bounds["y"] + bh > 1 - margin:
                         bounds["h"] = max(0.05, 1 - margin - bounds["y"] - 0.02)
 
-    # 7. Zoom transition buffer — shift overlays away from zoom ease-in/ease-out
+    # 6. Zoom transition buffer — shift overlays away from zoom ease-in/ease-out
     for comp in components:
         for ze in zoom_effects:
             if comp["start_time"] >= ze.get("end_time", 0) or ze.get("start_time", 0) >= comp["end_time"]:
@@ -781,13 +881,9 @@ def _validate_plan(
                 comp["end_time"] = comp["start_time"] + comp_dur
                 issues.append(f"Shifted {comp['template']} past zoom (transition window too short)")
 
-    # 8. Multi-pass spatial conflict resolution (max 3 iterations to converge)
-    for pass_num in range(3):
-        moved = _resolve_spatial_conflicts(components, edge_aligned_templates, issues)
-        if not moved:
-            break
-        if pass_num > 0:
-            issues.append(f"Re-resolved spatial conflicts (pass {pass_num + 1})")
+    # 7. Single-pass free-rectangle tiling (face + inter-component conflicts)
+    face_windows = context.get("face_windows", [])
+    _resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues)
 
     logger.info("Validation: %d components kept, %d issues", len(components), len(issues))
     return components, issues

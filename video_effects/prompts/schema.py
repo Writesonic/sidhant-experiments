@@ -13,6 +13,6 @@ class ParsedEffectCues(BaseModel):
         description="List of detected effect cues from the transcript",
     )
     reasoning: str = Field(
-        "",
-        description="Brief explanation of why these effects were chosen",
+        description="Brief explanation of why these effects were chosen. If no effects are appropriate, explain why.",
+        min_length=10,
     )

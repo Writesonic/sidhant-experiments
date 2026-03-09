@@ -12,7 +12,7 @@ G8a: Build Spatial Context
   │      │  (plan_motion_graphics_base.md prompt)
   │      │
   │      ▼
-  │    8-pass _validate_plan()
+  │    7-step _validate_plan()
   │      │
   │      ▼
   │    HITL Approval (up to 5 rounds)
@@ -94,26 +94,36 @@ Each template has a guidance markdown file in `prompts/mg_guidance/` loaded dyna
 
 ## Spatial Validation (`_validate_plan()`)
 
-An 8-pass validation pipeline in `activities/remotion.py` (lines 599–815) ensures overlays don't occlude the speaker or conflict with each other.
+A multi-phase validation pipeline in `activities/remotion.py` ensures overlays don't occlude the speaker or conflict with each other. Uses zero overlap tolerance — any intersection triggers relocation.
 
-### Pass Summary
+### One-Shot Corrections
 
 | # | Check | Action |
 |---|-------|--------|
 | 1 | **Hard bounds clamping** | Keep within [0.02, 0.98], enforce min size 0.05 × 0.03 |
 | 2 | **Time clamping** | Clamp to video duration, enforce min 0.5s |
 | 3 | **Template duration limits** | Enforce max duration per template spec (e.g., lower_third 6s max) |
-| 4 | **Face overlap relocation** | If >5% overlap with face, relocate to best safe region via `_find_best_safe_region()` |
-| 5 | **Concurrent count enforcement** | Drop lowest z_index if ≥2 non-edge-aligned components overlap in time |
-| 6 | **Zoom viewport clamping** | During active zooms, clamp bounds to the visible inner area (e.g., 67% for 1.5× zoom) |
-| 7 | **Zoom transition buffer** | Shift overlay timing away from zoom ease-in/ease-out windows |
-| 8 | **Multi-pass spatial conflict resolution** | Up to 3 iterations of `_resolve_spatial_conflicts()` to converge |
+| 4 | **Concurrent count enforcement** | Drop lowest z_index if ≥2 non-edge-aligned components overlap in time |
+| 5 | **Zoom viewport clamping** | During active zooms, clamp bounds to the visible inner area (e.g., 67% for 1.5× zoom) |
+| 6 | **Zoom transition buffer** | Shift overlay timing away from zoom ease-in/ease-out windows |
+
+### Single-Pass Conflict Resolution (free-rectangle tiling)
+
+After one-shot corrections, step 7 resolves all face and inter-component overlaps in a single pass via `_resolve_all_conflicts()`:
+
+1. Sort components by `z_index` descending — highest priority placed first.
+2. For each component, build an obstacle list: padded face rects (time-overlapping) + already-placed component rects (time-overlapping). Edge-aligned components are registered as obstacles but never relocated.
+3. If any obstacle overlaps the component's bounds, compute free rectangles within the safe frame (2% inset) using `_compute_free_rects()`, then find the best placement via `_find_best_free_placement()`.
+4. Register final bounds as an obstacle for subsequent (lower z_index) components.
+
+No convergence loop needed — each component is placed once and becomes a fixed obstacle.
 
 ### Key Helpers
 
 - `_rect_overlap_fraction(a, b)` — Overlap as fraction of rect a's area
-- `_find_best_safe_region(comp_w, comp_h, safe_regions)` — Picks largest fitting safe region, shrinks if needed
-- `_resolve_spatial_conflicts(components, edge_aligned_templates, issues)` — Shifts lower z_index component away (vertically then horizontally)
+- `_compute_free_rects(frame, obstacles)` — Maximal free rectangles after subtracting obstacles (bin-packing split)
+- `_find_best_free_placement(comp_w, comp_h, free_rects, original_pos)` — Picks closest fitting free rect, shrinks preserving aspect ratio if needed
+- `_resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues)` — Single-pass z_index-ordered placement with obstacle accumulation
 - `_compute_zoom_stable_window(zoom_cue)` — Returns time range where zoom is stable:
   - Bounce: 25%–75% of duration
   - In: 60%–end
