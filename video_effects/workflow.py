@@ -10,8 +10,8 @@ Pipeline (7+2 groups, G6 split into 3 sub-activities):
   G6b: Setup processors (face tracking, cache)
   G6c: Render video (decode → process → encode)
   G7: Final composition + audio mux
-  G8e: Render Remotion motion graphics overlay   (if enable_motion_graphics)
-  G9:  FFmpeg composite overlay onto base        (if enable_motion_graphics)
+  G8e: Render Remotion motion graphics overlay   
+  G9:  FFmpeg composite overlay onto base        
 """
 
 import asyncio
@@ -20,12 +20,12 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from video_effects.schemas.styles import StyleConfig, get_style
+    from video_effects.schemas.styles import get_style
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
 
 MAX_RETRIES = 5
 
-# Subtitle zone bounds (normalized 0-1) — used for both the subtitle component
+# Subtitle zone bounds (normalized 0-1) — used for both the subtitle componenct
 # and as a spatial obstacle to keep other overlays out of this region.
 SUBTITLE_BOUNDS = {"x": 0.0, "y": 0.78, "w": 1.0, "h": 0.22}
 
@@ -237,8 +237,9 @@ class VideoEffectsWorkflow:
 
         # --mg and --infographics both route through the code-gen pipeline
         enable_infographics = getattr(input, "enable_infographics", False) or input.enable_motion_graphics
+        enable_programmer = getattr(input, "enable_programmer", False)
         has_transcript = bool(transcript_result.get("segments"))
-        if not effects and not enable_infographics and not has_transcript:
+        if not effects and not enable_infographics and not enable_programmer and not has_transcript:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=0,
@@ -252,7 +253,7 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=activity_timeout,
         )
 
-        if not render_plan.get("has_effects") and not enable_infographics and not has_transcript:
+        if not render_plan.get("has_effects") and not enable_infographics and not enable_programmer and not has_transcript:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=len(effects),
@@ -287,9 +288,25 @@ class VideoEffectsWorkflow:
                 start_to_close_timeout=activity_timeout,
             )
 
-        # ── Infographic generation (parallel with video render) ──
+        # ── Component generation (parallel with video render) ──
+        # ProgrammerWorkflow takes priority over InfographicGeneratorWorkflow
         infographic_task = None
-        if enable_infographics and spatial_context:
+        if enable_programmer and spatial_context:
+            wf_prefix = workflow.info().workflow_id.split("-")[-1][:6]
+            infographic_task = workflow.execute_child_workflow(
+                "ProgrammerWorkflow",
+                {
+                    "spatial_context": spatial_context,
+                    "transcript": transcript_result["transcript"],
+                    "segments": transcript_result["segments"],
+                    "style_config": style_config,
+                    "video_fps": int(video_info.get("fps", 30)),
+                    "video_info": video_info,
+                    "workflow_prefix": wf_prefix,
+                },
+                id=f"{workflow.info().workflow_id}/programmer-gen",
+            )
+        elif enable_infographics and spatial_context:
             wf_prefix = workflow.info().workflow_id.split("-")[-1][:6]
             infographic_task = workflow.execute_child_workflow(
                 "InfographicGeneratorWorkflow",
@@ -306,7 +323,7 @@ class VideoEffectsWorkflow:
             )
 
         # ── G6b: Setup processors (face tracking, etc.) ──
-        setup_result = await workflow.execute_activity(
+        await workflow.execute_activity(
             "vfx_setup_processors",
             {
                 "video_path": video_path, "effects": effects,

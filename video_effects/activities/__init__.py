@@ -27,6 +27,11 @@ from .infographic import (
     validate_infographic,
     build_generated_registry,
 )
+from .programmer import (
+    programmer_brainstorm,
+    programmer_critique,
+    programmer_generate_code,
+)
 
 ALL_VIDEO_EFFECTS_ACTIVITIES = [
     get_video_info,
@@ -58,4 +63,7 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     generate_infographic_code,
     validate_infographic,
     build_generated_registry,
+    programmer_brainstorm,
+    programmer_critique,
+    programmer_generate_code,
 ]

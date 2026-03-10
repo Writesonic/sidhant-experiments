@@ -12,6 +12,7 @@ class VideoEffectsInput(BaseModel):
     dev_mode: bool = Field(False, description="Dev mode: effects triggered by explicit verbal commands")
     smooth_jump_cuts: bool = Field(False, description="Detect jump cuts and insert synthetic zoom transitions")
     enable_infographics: bool = Field(False, description="Enable LLM-generated infographic overlays")
+    enable_programmer: bool = Field(False, description="Enable free-hand creative programmer workflow")
 
 
 class VideoEffectsOutput(BaseModel):

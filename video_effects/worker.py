@@ -16,6 +16,7 @@ from video_effects.activities.creative import design_style
 from video_effects.config import settings
 from video_effects.creative_workflow import CreativeDesignerWorkflow
 from video_effects.infographic_workflow import InfographicGeneratorWorkflow
+from video_effects.programmer_workflow import ProgrammerWorkflow
 from video_effects.workflow import VideoEffectsWorkflow
 
 
@@ -35,7 +36,7 @@ async def main():
         worker = Worker(
             client,
             task_queue=settings.TASK_QUEUE,
-            workflows=[VideoEffectsWorkflow, CreativeDesignerWorkflow, InfographicGeneratorWorkflow],
+            workflows=[VideoEffectsWorkflow, CreativeDesignerWorkflow, InfographicGeneratorWorkflow, ProgrammerWorkflow],
             activities=[*ALL_VIDEO_EFFECTS_ACTIVITIES, design_style],
             activity_executor=executor,
         )

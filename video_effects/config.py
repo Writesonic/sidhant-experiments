@@ -39,5 +39,9 @@ class VideoEffectsSettings(BaseSettings):
     INFOGRAPHIC_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per infographic
     INFOGRAPHIC_LLM_MODEL: str = "claude-opus-4-6"  # Use Opus for codegen quality
 
+    # Programmer workflow
+    PROGRAMMER_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per component
+    PROGRAMMER_LLM_MODEL: str = "claude-opus-4-6"  # Opus for creative code gen
+
 
 settings = VideoEffectsSettings()

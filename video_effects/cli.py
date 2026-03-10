@@ -161,7 +161,8 @@ async def run_workflow(args) -> None:
     workflow_id = f"vfx-{uuid.uuid4().hex[:8]}"
     # --mg and --infographics both route through the code-gen pipeline
     enable_infographics = getattr(args, "infographics", False) or args.motion_graphics
-    enable_mg = args.motion_graphics or enable_infographics
+    enable_programmer = getattr(args, "programmer", False)
+    enable_mg = args.motion_graphics or enable_infographics or enable_programmer
 
     input_data = VideoEffectsInput(
         input_video=os.path.abspath(args.input),
@@ -172,6 +173,7 @@ async def run_workflow(args) -> None:
         dev_mode=args.dev,
         smooth_jump_cuts=args.smooth_cuts,
         enable_infographics=enable_infographics,
+        enable_programmer=enable_programmer,
     )
 
     print(f"Starting Video Effects workflow: {workflow_id}")
@@ -305,6 +307,11 @@ def main():
         "--infographics",
         action="store_true",
         help="Enable LLM-generated infographic overlays (same as --mg)",
+    )
+    run_parser.add_argument(
+        "--programmer",
+        action="store_true",
+        help="Enable free-hand creative programmer workflow (replaces --infographics)",
     )
 
     args = parser.parse_args()

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 from temporalio import activity
@@ -16,6 +17,8 @@ from video_effects.schemas.infographic import (
 )
 
 logger = logging.getLogger(__name__)
+
+_REGISTRY_LOCK = threading.Lock()
 
 _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -323,6 +326,7 @@ def validate_infographic(input_data: dict) -> dict:
         "component_id": str,
         "tsx_code": str,
         "export_name": str,
+        "props": dict | None,  # component data props for test render
     }
     Output: {
         "valid": bool,
@@ -333,109 +337,160 @@ def validate_infographic(input_data: dict) -> dict:
     component_id = input_data["component_id"]
     tsx_code = input_data["tsx_code"]
     export_name = input_data["export_name"]
+    component_props = input_data.get("props", {})
 
     remotion_dir = _get_remotion_dir()
     generated_dir = remotion_dir / "src" / "components" / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write component file
-    component_path = generated_dir / f"{component_id}.tsx"
-    component_path.write_text(tsx_code)
+    # Everything under the lock: write → rebuild registry → type-check → render.
+    # This prevents concurrent validations from poisoning each other's registry.
+    with _REGISTRY_LOCK:
+        # Write component file
+        component_path = generated_dir / f"{component_id}.tsx"
+        component_path.write_text(tsx_code)
 
-    errors: list[str] = []
+        # Rebuild registry BEFORE type-check so tsc sees a consistent state:
+        # all existing .tsx files + the current component.
+        _write_temp_registry(generated_dir, component_id, export_name)
 
-    # Step 1: TypeScript type-check
-    activity.heartbeat(f"Type-checking {component_id}")
-    try:
-        tsc_result = subprocess.run(
-            ["npx", "tsc", "--noEmit", "--pretty", "false"],
-            cwd=str(remotion_dir),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if tsc_result.returncode != 0:
-            # Filter errors to only those from our generated file
-            stderr = tsc_result.stdout + tsc_result.stderr
-            for line in stderr.split("\n"):
-                if component_id in line or f"generated/{component_id}" in line:
-                    errors.append(line.strip())
-            if not errors and tsc_result.returncode != 0:
-                # Include all errors if none matched our file
-                all_errors = [l.strip() for l in stderr.split("\n") if l.strip() and "error TS" in l]
-                errors = all_errors[:10]
-    except subprocess.TimeoutExpired:
-        errors.append("TypeScript type-check timed out after 60 seconds")
-    except FileNotFoundError:
-        errors.append("npx/tsc not found — cannot type-check")
+        errors: list[str] = []
 
-    if errors:
-        logger.warning("Type-check failed for %s: %d errors", component_id, len(errors))
-        # Clean up the broken file
-        component_path.unlink(missing_ok=True)
-        return {"valid": False, "errors": errors, "preview_path": ""}
+        # Step 1: TypeScript type-check
+        activity.heartbeat(f"Type-checking {component_id}")
+        try:
+            tsc_result = subprocess.run(
+                ["npx", "tsc", "--noEmit", "--pretty", "false"],
+                cwd=str(remotion_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if tsc_result.returncode != 0:
+                stderr = tsc_result.stdout + tsc_result.stderr
+                # Only blame this component for errors in its own file
+                component_file = f"{component_id}.tsx"
+                for line in stderr.split("\n"):
+                    if component_file in line:
+                        errors.append(line.strip())
+        except subprocess.TimeoutExpired:
+            errors.append("TypeScript type-check timed out after 60 seconds")
+        except FileNotFoundError:
+            errors.append("npx/tsc not found — cannot type-check")
 
-    # Step 2: Test render a still frame
-    activity.heartbeat(f"Test-rendering {component_id}")
-    preview_path = str(generated_dir / f"{component_id}_preview.png")
+        if errors:
+            logger.warning("Type-check failed for %s: %d errors", component_id, len(errors))
+            component_path.unlink(missing_ok=True)
+            _cleanup_registry(generated_dir)
+            return {"valid": False, "errors": errors, "preview_path": ""}
 
-    # Build a minimal registry so we can render just this component
-    _write_temp_registry(generated_dir, component_id, export_name)
+        # Step 2: Test render a still frame
+        activity.heartbeat(f"Test-rendering {component_id}")
+        preview_path = str(generated_dir / f"{component_id}_preview.png")
 
-    try:
-        test_plan = {
-            "components": [{
-                "template": component_id,
-                "startFrame": 0,
-                "durationInFrames": 90,
-                "props": {"position": {"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3}},
-                "bounds": {"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3},
-                "zIndex": 1,
-            }],
-            "colorPalette": [],
-            "includeBaseVideo": False,
-        }
+        try:
+            # Merge component data props with required position prop
+            render_props = {
+                **component_props,
+                "position": {"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3},
+            }
+            test_plan = {
+                "components": [{
+                    "template": component_id,
+                    "startFrame": 0,
+                    "durationInFrames": 90,
+                    "props": render_props,
+                    "bounds": {"x": 0.1, "y": 0.1, "w": 0.4, "h": 0.3},
+                    "zIndex": 1,
+                }],
+                "colorPalette": [],
+                "includeBaseVideo": False,
+            }
 
-        render_still(
-            composition_id="MotionOverlay",
-            frame=30,
-            props=test_plan,
-            output_path=preview_path,
-        )
-    except Exception as e:
-        err_msg = str(e)
-        # Truncate long error messages
-        if len(err_msg) > 500:
-            err_msg = err_msg[:500] + "..."
-        errors.append(f"Render test failed: {err_msg}")
-        component_path.unlink(missing_ok=True)
-        _cleanup_registry(generated_dir)
-        return {"valid": False, "errors": errors, "preview_path": ""}
+            render_still(
+                composition_id="MotionOverlay",
+                frame=30,
+                props=test_plan,
+                output_path=preview_path,
+            )
+        except Exception as e:
+            err_msg = str(e)
+            if len(err_msg) > 500:
+                err_msg = err_msg[:500] + "..."
+            errors.append(f"Render test failed: {err_msg}")
+            component_path.unlink(missing_ok=True)
+            _cleanup_registry(generated_dir)
+            return {"valid": False, "errors": errors, "preview_path": ""}
 
     logger.info("Validation passed for %s", component_id)
     return {"valid": True, "errors": [], "preview_path": preview_path}
 
 
-def _write_temp_registry(generated_dir: Path, component_id: str, export_name: str) -> None:
-    """Write a temporary _registry.ts with just the component being tested."""
-    # Check if registry already exists and has other components
-    registry_path = generated_dir / "_registry.ts"
-    registry_path.write_text(
-        f'import React from "react";\n'
-        f'import {{ {export_name} }} from "./{component_id}";\n'
-        f"\n"
-        f"type ComponentMap = {{ [key: string]: React.FC<any> }};\n"
-        f"\n"
-        f"export const GeneratedRegistry: ComponentMap = {{\n"
-        f'  "{component_id}": {export_name} as React.FC<any>,\n'
-        f"}};\n"
+def _derive_export_name(component_id: str) -> str:
+    """Derive PascalCase export name from component_id."""
+    name = "".join(
+        word.capitalize() for word in component_id.replace("-", "_").split("_")
     )
+    if name and name[0].isdigit():
+        name = "Ig" + name
+    return name
+
+
+def _rebuild_registry(
+    generated_dir: Path,
+    ensure_component: tuple[str, str] | None = None,
+) -> None:
+    """Rebuild _registry.ts from all .tsx files in generated/.
+
+    Args:
+        ensure_component: Optional (component_id, export_name) to guarantee
+            inclusion even if glob hasn't caught up yet.
+    """
+    registry_path = generated_dir / "_registry.ts"
+
+    components: dict[str, str] = {}
+    for tsx_file in generated_dir.glob("*.tsx"):
+        if tsx_file.name.startswith("_"):
+            continue
+        cid = tsx_file.stem
+        components[cid] = _derive_export_name(cid)
+
+    if ensure_component:
+        cid, ename = ensure_component
+        components[cid] = ename
+
+    if not components:
+        registry_path.unlink(missing_ok=True)
+        return
+
+    imports = []
+    entries = []
+    for cid in sorted(components):
+        ename = components[cid]
+        imports.append(f'import {{ {ename} }} from "./{cid}";')
+        entries.append(f'  "{cid}": {ename} as React.FC<any>,')
+
+    registry_code = (
+        'import React from "react";\n'
+        + "\n".join(imports) + "\n"
+        "\n"
+        "type ComponentMap = { [key: string]: React.FC<any> };\n"
+        "\n"
+        "export const GeneratedRegistry: ComponentMap = {\n"
+        + "\n".join(entries) + "\n"
+        "};\n"
+    )
+    registry_path.write_text(registry_code)
+
+
+def _write_temp_registry(generated_dir: Path, component_id: str, export_name: str) -> None:
+    """Write cumulative registry ensuring component_id is included."""
+    _rebuild_registry(generated_dir, ensure_component=(component_id, export_name))
 
 
 def _cleanup_registry(generated_dir: Path) -> None:
-    """Remove the temporary registry file."""
-    registry_path = generated_dir / "_registry.ts"
-    registry_path.unlink(missing_ok=True)
+    """Rebuild registry after removing a failed component."""
+    _rebuild_registry(generated_dir)
 
 
 # ---------------------------------------------------------------------------
