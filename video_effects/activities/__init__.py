@@ -5,6 +5,7 @@ from .validate import validate_timeline
 from .apply_effects import apply_effects, prepare_render, setup_processors, render_video
 from .compose import compose_final
 from .remotion import (
+    detect_faces_activity,
     build_remotion_context,
     plan_motion_graphics,
     validate_merged_plan,
@@ -17,6 +18,11 @@ from .detect_jump_cuts import detect_jump_cuts
 from .infographic import (
     cleanup_generated,
     plan_infographics,
+    plan_diagrams,
+    plan_timelines,
+    plan_quotes,
+    plan_code_blocks,
+    plan_comparisons,
     generate_infographic_code,
     validate_infographic,
     build_generated_registry,
@@ -33,6 +39,7 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     setup_processors,
     render_video,
     compose_final,
+    detect_faces_activity,
     build_remotion_context,
     plan_motion_graphics,
     validate_merged_plan,
@@ -43,6 +50,11 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     detect_jump_cuts,
     cleanup_generated,
     plan_infographics,
+    plan_diagrams,
+    plan_timelines,
+    plan_quotes,
+    plan_code_blocks,
+    plan_comparisons,
     generate_infographic_code,
     validate_infographic,
     build_generated_registry,

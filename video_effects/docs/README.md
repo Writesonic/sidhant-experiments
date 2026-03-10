@@ -87,6 +87,11 @@ video_effects/
 │   ├── design_style.md         # Style auto-detection prompt
 │   ├── plan_motion_graphics_base.md  # MG planning prompt
 │   ├── plan_infographics.md    # Infographic planning prompt
+│   ├── plan_diagrams.md        # Diagram planning prompt
+│   ├── plan_timelines.md       # Timeline planning prompt
+│   ├── plan_quotes.md          # Quote/callout planning prompt
+│   ├── plan_code_blocks.md     # Code block planning prompt
+│   ├── plan_comparisons.md     # Comparison planning prompt
 │   ├── generate_infographic_code.md  # TSX code generation prompt
 │   ├── infographic_api_reference.md  # Allowed imports for generated code
 │   ├── schema.py               # ParsedEffectCues response model
@@ -118,5 +123,6 @@ video_effects/
             ├── zoom-context.ts # ZoomDataProvider, useZoomFrame
             ├── easing.ts       # Spring configs (GENTLE, BOUNCY, SNAPPY, SMOOTH)
             ├── fonts.ts        # Google Fonts loader
-            └── infographic-utils.ts  # SVG math helpers
+            ├── infographic-utils.ts  # SVG math helpers
+            └── component-utils.ts    # Diagram, timeline, code block utilities
 ```

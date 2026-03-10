@@ -49,6 +49,7 @@ Structure the `data` field with all values the component will need:
 Use normalized coordinates (0-1):
 - `bounds.x`, `bounds.y`: top-left corner
 - `bounds.w`, `bounds.h`: width, height
-- Common safe zones: right side (x: 0.55-0.65), bottom (y: 0.6-0.7), left (x: 0.05-0.1)
+- Common safe zones: right side (x: 0.55-0.65), bottom (y: 0.6-0.72), left (x: 0.05-0.1)
+- **RESERVED: y >= 0.78 is the subtitle zone — never place components there**
 
 {STYLE_GUIDE}

@@ -5,6 +5,7 @@ For each infographic spec: generate TSX code, validate, retry up to N times,
 fall back to existing templates on failure.
 """
 
+import asyncio
 import math
 from datetime import timedelta
 
@@ -14,13 +15,30 @@ with workflow.unsafe.imports_passed_through():
     from video_effects.config import settings
     from video_effects.schemas.infographic import FALLBACK_MAP, InfographicType
 
+# All category planners to run in parallel
+_PLANNER_ACTIVITIES = [
+    "vfx_plan_infographics",
+    "vfx_plan_diagrams",
+    "vfx_plan_timelines",
+    "vfx_plan_quotes",
+    "vfx_plan_code_blocks",
+    "vfx_plan_comparisons",
+]
+
+# Maximum specs to keep after merging all planner results
+_MAX_SPECS = 6
+
 
 @workflow.defn(name="InfographicGeneratorWorkflow")
 class InfographicGeneratorWorkflow:
 
     @workflow.run
     async def run(self, input: dict) -> dict:
-        """Generate custom infographic components from transcript analysis.
+        """Generate custom components from transcript analysis.
+
+        Runs 6 specialist planners in parallel (infographics, diagrams, timelines,
+        quotes, code blocks, comparisons), merges results by score, and generates
+        TSX code for the top specs.
 
         Input: {
             "spatial_context": dict,
@@ -55,25 +73,48 @@ class InfographicGeneratorWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        # ── A1: Plan infographics ──
-        plan_result = await workflow.execute_activity(
-            "vfx_plan_infographics",
-            {
-                "spatial_context": spatial_context,
-                "transcript": transcript,
-                "segments": segments,
-                "style_config": style_config,
-                "video_fps": fps,
-            },
-            start_to_close_timeout=activity_timeout,
-        )
+        # ── A1: Run all category planners in parallel ──
+        plan_input = {
+            "spatial_context": spatial_context,
+            "transcript": transcript,
+            "segments": segments,
+            "style_config": style_config,
+            "video_fps": fps,
+        }
 
-        specs = plan_result.get("infographics", [])
+        plan_tasks = [
+            workflow.execute_activity(
+                activity_name,
+                plan_input,
+                start_to_close_timeout=activity_timeout,
+            )
+            for activity_name in _PLANNER_ACTIVITIES
+        ]
+
+        results = await asyncio.gather(*plan_tasks, return_exceptions=True)
+
+        # Merge: concatenate all specs, sort by score descending, take top N
+        all_specs: list[dict] = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                workflow.logger.warning(
+                    "Planner %s failed: %s", _PLANNER_ACTIVITIES[i], result,
+                )
+                continue
+            all_specs.extend(result.get("infographics", []))
+
+        # Sort by score descending, take top _MAX_SPECS
+        all_specs.sort(key=lambda s: s.get("score", 50), reverse=True)
+        specs = all_specs[:_MAX_SPECS]
+
         if not specs:
-            workflow.logger.info("No infographics planned, skipping code generation")
+            workflow.logger.info("No components planned by any planner, skipping code generation")
             return {"generated_components": [], "fallback_components": [], "registry_path": ""}
 
-        workflow.logger.info("Planning complete: %d infographic(s) to generate", len(specs))
+        workflow.logger.info(
+            "Planning complete: %d spec(s) selected from %d total across %d planners",
+            len(specs), len(all_specs), len(_PLANNER_ACTIVITIES),
+        )
 
         # ── A2+A3: Generate + validate each infographic ──
         successful = []  # [{component_id, export_name, spec, props}]

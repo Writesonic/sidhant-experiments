@@ -1,6 +1,8 @@
 # Motion Graphics
 
-The Remotion motion graphics system adds animated overlays (titles, lower thirds, lists, data visualizations, subtitles) to the processed video. It's driven by LLM planning with face-aware spatial validation.
+> **Deprecation notice:** The old template-based MG planner (`_plan_motion_graphics` / `vfx_plan_motion_graphics`) has been disabled. Both `--mg` and `--infographics` now route through the [code-gen infographic pipeline](infographics.md). The `vfx_plan_motion_graphics` activity, prompt (`plan_motion_graphics_base.md`), and guidance files (`mg_guidance/*.md`) remain in the codebase but are no longer called.
+
+The Remotion motion graphics system adds animated overlays (titles, lower thirds, lists, data visualizations, subtitles) to the processed video. Overlays are now generated via the infographic code-gen pipeline with face-aware spatial validation.
 
 ## End-to-End Flow
 
@@ -8,16 +10,11 @@ The Remotion motion graphics system adds animated overlays (titles, lower thirds
 G8a: Build Spatial Context
   │  (face windows, safe regions, zoom state)
   │
-  ├──► G8b: LLM Plan Motion Graphics
-  │      │  (plan_motion_graphics_base.md prompt)
+  ├──► Infographic Generator (child workflow)
+  │      │  6 parallel planners → LLM code-gen → validate
+  │      │  See infographics.md
   │      │
-  │      ▼
-  │    7-step _validate_plan()
-  │      │
-  │      ▼
-  │    HITL Approval (up to 5 rounds)
-  │      │
-  │      ├──► Merge infographic components
+  │      ├──► Merge infographic components into MG plan
   │      │    Re-validate merged plan
   │      │    Inject subtitles (zIndex=100)
   │      │

@@ -67,6 +67,16 @@ import {
 - `colorWithOpacity(hex, opacity)` -> `string` — `"rgba(r,g,b,a)"` from hex + alpha
 - `lerpColor(hex1, hex2, t)` -> `string` — blend two hex colors
 
+## From `../../lib/component-utils`
+
+```typescript
+import { drawConnector, distributeEvenly, tokenize } from "../../lib/component-utils";
+```
+
+- `drawConnector(x1, y1, x2, y2, curve?)` -> `string` — SVG path `d` string for a curved connector between two points. `curve` defaults to 0.5 (0 = straight line)
+- `distributeEvenly(count, start, end)` -> `number[]` — compute evenly-spaced positions along a range
+- `tokenize(code, language)` -> `{ text: string, type: "keyword" | "string" | "comment" | "number" | "plain" }[]` — simple regex tokenizer for syntax highlighting (supports `"javascript"`, `"typescript"`, `"python"`)
+
 ## Types
 
 ```typescript

@@ -134,7 +134,7 @@ Three Temporal workflows coordinate the work:
 | Face Tracking | `helpers/face_tracking.py` | MediaPipe detection + EMA smoothing |
 | Remotion Helpers | `helpers/remotion.py` | `render_media()`, `composite_overlay()` |
 
-### Activities (22 total)
+### Activities (27 total)
 
 | Group | Activities |
 |-------|-----------|
@@ -145,7 +145,7 @@ Three Temporal workflows coordinate the work:
 | Render | `vfx_prepare_render`, `vfx_setup_processors`, `vfx_render_video` |
 | Composition | `vfx_compose_final` |
 | Motion graphics | `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics`, `vfx_preview_motion_graphics` |
-| Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry` |
+| Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_plan_diagrams`, `vfx_plan_timelines`, `vfx_plan_quotes`, `vfx_plan_code_blocks`, `vfx_plan_comparisons`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry` |
 | Creative | `vfx_design_style` |
 | Jump cuts | `vfx_detect_jump_cuts` |
 
@@ -179,11 +179,10 @@ The LLM reads the transcript and infers effect cues — zooms, color grades, whi
 
 ### Stage 4: Parallel Processing (G6–G8)
 
-Three streams run concurrently after approval:
+Two streams run concurrently after approval:
 
 1. **OpenCV render** (G6b–G6c): Single-pass frame pipeline applies effects in phase order. See [Effects Pipeline](effects-pipeline.md).
-2. **MG planning** (G8a–G8b): Build spatial context (face windows, safe regions, zoom state), then LLM plans overlay placements. Validated with 8-pass spatial/temporal checks. User approves. See [Motion Graphics](motion-graphics.md).
-3. **Infographic generation** (child workflow): LLM generates custom TSX components, validates with TypeScript + test renders, falls back to templates on failure. See [Infographics](infographics.md).
+2. **Infographic generation** (G8a + child workflow): Build spatial context (face windows, safe regions, zoom state), then 6 specialist planners run in parallel (infographics, diagrams, timelines, quotes, code blocks, comparisons), results merged by score, then LLM generates custom TSX components, validates with TypeScript + test renders, falls back to templates on failure. Both `--mg` and `--infographics` route through this pipeline. See [Infographics](infographics.md).
 
 ### Stage 5: Composition (G7–G9)
 
@@ -198,5 +197,5 @@ Three streams run concurrently after approval:
 - **Phase ordering**: Effects execute in strict numeric order (vignette → color → blur → whip → zoom → subtitle → speed_ramp) to ensure correct composition.
 - **Transparent overlays**: MG rendered as ProRes 4444 with alpha, composited via FFmpeg `premultiply + overlay`. Keeps the OpenCV and Remotion pipelines fully decoupled.
 - **LLM-driven planning**: Effects, motion graphics, and infographics are all planned by LLMs analyzing the transcript — not by explicit user markup.
-- **Human-in-the-loop**: Two approval gates (timeline + MG plan) with feedback loops, skippable via `--auto-approve`.
+- **Human-in-the-loop**: One approval gate (timeline) with feedback loop, skippable via `--auto-approve`.
 - **Face awareness**: Face tracking data flows through the entire system — from zoom dampening in OpenCV to spatial layout hooks in Remotion components.

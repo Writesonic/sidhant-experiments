@@ -13,11 +13,11 @@ python -m video_effects.cli run <input_video> [OPTIONS]
 | `input_video` | — | positional | required | Input video file path |
 | `--output` | `-o` | str | `{input}_effects.mp4` | Output video file path |
 | `--auto-approve` | — | flag | False | Skip interactive approval steps |
-| `--motion-graphics` | `--mg` | flag | False | Enable Remotion motion graphics overlay |
+| `--motion-graphics` | `--mg` | flag | False | Enable code-gen motion graphics overlays (routes through infographic pipeline) |
 | `--style` | `-s` | choice | auto-detect | Style preset name (see [Styles](styles.md)) |
 | `--dev` | — | flag | False | Dev mode: effects from explicit verbal commands |
 | `--smooth-cuts` | — | flag | False | Detect jump cuts and insert synthetic zoom transitions |
-| `--infographics` | — | flag | False | Enable LLM-generated infographic overlays (requires `--mg`) |
+| `--infographics` | — | flag | False | Enable LLM-generated infographic overlays (same as `--mg`) |
 
 ### Examples
 
@@ -37,7 +37,7 @@ python -m video_effects.cli run demo.mp4 --dev
 
 ## Interactive Approval Flow
 
-When `--auto-approve` is not set, the CLI pauses at two gates:
+When `--auto-approve` is not set, the CLI pauses at one gate:
 
 ### 1. Timeline Approval
 
@@ -63,27 +63,6 @@ Approve timeline? [y/n/json]:
 
 Up to 5 rejection rounds. Feedback is passed back to the LLM for re-planning.
 
-### 2. MG Plan Approval (if `--mg`)
-
-After the LLM plans motion graphics overlays:
-
-```
-┌────────────────────────────────────────────────────────────┐
-│ #  Template        Start    End      Props                  │
-│ 1  animated_title  0:02.5   0:05.5   "Key Insight" fade     │
-│ 2  lower_third     0:08.0   0:14.0   "John Doe" slide       │
-│ 3  data_animation  0:20.0   0:24.0   counter: 42%           │
-│ ...                                                         │
-│                                                             │
-│ Palette: #FFFFFF #1A1A1A #FF3333                            │
-│ Validation issues: 0                                        │
-└────────────────────────────────────────────────────────────┘
-
-Approve MG plan? [y/n/json]:
-```
-
-Same approval flow as timeline. Rejects loop back to LLM with feedback.
-
 ### Workflow Signals
 
 The CLI communicates with the Temporal workflow via signals:
@@ -91,14 +70,12 @@ The CLI communicates with the Temporal workflow via signals:
 | Signal | Args | Purpose |
 |--------|------|---------|
 | `approve_timeline` | `(bool, str)` | Approved flag + feedback text |
-| `approve_mg_plan` | `(bool, str)` | Approved flag + feedback text |
 
 And queries for displaying current state:
 
 | Query | Returns | Purpose |
 |-------|---------|---------|
 | `get_timeline` | `dict` | Current effect timeline |
-| `get_mg_plan` | `dict` | Current MG composition plan |
 
 ## Configuration
 
@@ -176,7 +153,7 @@ python -m video_effects.worker
 | `CreativeDesignerWorkflow` | Auto-style detection |
 | `InfographicGeneratorWorkflow` | Code generation (A0–A4) |
 
-### Registered Activities (22)
+### Registered Activities
 
 All activities from `ALL_VIDEO_EFFECTS_ACTIVITIES` plus `design_style`. See [Architecture](architecture.md) for the full list.
 

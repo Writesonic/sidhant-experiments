@@ -323,6 +323,18 @@ Available fonts: Inter, BebasNeue, DMSans, Oswald, SourceSans3, Poppins.
 | `colorWithOpacity(hex, opacity)` | Hex → `rgba(r,g,b,a)` |
 | `lerpColor(hex1, hex2, t)` | Linear color interpolation |
 
+## Component Utilities
+
+**File:** `remotion/src/lib/component-utils.ts`
+
+Utilities for diagram, timeline, and code block components.
+
+| Function | Purpose |
+|----------|---------|
+| `drawConnector(x1, y1, x2, y2, curve?)` | SVG path `d` string for curved connector between two points. `curve` defaults to 0.5 (0 = straight line) |
+| `distributeEvenly(count, start, end)` | Compute evenly-spaced positions along a range |
+| `tokenize(code, language)` | Simple regex tokenizer for syntax highlighting. Returns `{text, type}[]` where type is `"keyword"`, `"string"`, `"comment"`, `"number"`, or `"plain"`. Supports JavaScript, TypeScript, Python |
+
 ## Type Definitions
 
 **File:** `remotion/src/types.ts`

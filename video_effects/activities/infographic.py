@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -14,7 +13,6 @@ from video_effects.helpers.llm import call_structured, call_text, load_prompt
 from video_effects.helpers.remotion import render_still, _get_remotion_dir
 from video_effects.schemas.infographic import (
     InfographicPlanResponse,
-    InfographicSpec,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,33 +68,12 @@ def cleanup_generated(input_data: dict) -> dict:
     return {"cleaned": cleaned}
 
 
-@activity.defn(name="vfx_plan_infographics")
-def plan_infographics(input_data: dict) -> dict:
-    """LLM analyzes transcript and decides WHAT infographics to create.
-
-    Input: {
-        "spatial_context": dict,
-        "transcript": str,
-        "segments": list[dict],
-        "style_config": dict | None,
-        "video_fps": int,
-    }
-    Output: {
-        "infographics": list[dict],  # list of InfographicSpec dicts
-        "reasoning": str,
-    }
-    """
+def _build_user_message(input_data: dict) -> str:
+    """Build the shared user message for all planning activities."""
     context = input_data["spatial_context"]
     transcript = input_data.get("transcript", "")
     segments = input_data.get("segments", [])
-    style_config = input_data.get("style_config")
-    fps = input_data.get("video_fps", 30)
 
-    base_prompt = load_prompt("plan_infographics.md")
-    style_guide = _build_style_guide(style_config)
-    system_prompt = base_prompt.replace("{STYLE_GUIDE}", style_guide)
-
-    # Build user message
     lines = []
     video = context.get("video", {})
     lines.append(f"## Video Info")
@@ -128,9 +105,24 @@ def plan_infographics(input_data: dict) -> dict:
     if transcript:
         lines.append(f"## Full Transcript\n\n{transcript[:3000]}\n")
 
-    user_message = "\n".join(lines)
+    return "\n".join(lines)
 
-    activity.heartbeat("Planning infographics via LLM")
+
+def _plan_category(category: str, prompt_filename: str, input_data: dict) -> dict:
+    """Shared planner logic for all component categories.
+
+    Loads the category-specific prompt, builds the user message,
+    calls the LLM, and returns the planning result.
+    """
+    style_config = input_data.get("style_config")
+
+    base_prompt = load_prompt(prompt_filename)
+    style_guide = _build_style_guide(style_config)
+    system_prompt = base_prompt.replace("{STYLE_GUIDE}", style_guide)
+
+    user_message = _build_user_message(input_data)
+
+    activity.heartbeat(f"Planning {category} via LLM")
 
     raw = call_structured(
         system_prompt=system_prompt,
@@ -140,12 +132,61 @@ def plan_infographics(input_data: dict) -> dict:
     )
 
     infographics = raw.get("infographics", [])
-    logger.info("LLM planned %d infographics", len(infographics))
+    logger.info("LLM planned %d %s component(s)", len(infographics), category)
 
     return {
         "infographics": infographics,
         "reasoning": raw.get("reasoning", ""),
     }
+
+
+@activity.defn(name="vfx_plan_infographics")
+def plan_infographics(input_data: dict) -> dict:
+    """LLM analyzes transcript and decides WHAT infographics to create.
+
+    Input: {
+        "spatial_context": dict,
+        "transcript": str,
+        "segments": list[dict],
+        "style_config": dict | None,
+        "video_fps": int,
+    }
+    Output: {
+        "infographics": list[dict],  # list of InfographicSpec dicts
+        "reasoning": str,
+    }
+    """
+    return _plan_category("infographics", "plan_infographics.md", input_data)
+
+
+@activity.defn(name="vfx_plan_diagrams")
+def plan_diagrams(input_data: dict) -> dict:
+    """LLM analyzes transcript for diagram opportunities (flowcharts, mind maps, etc.)."""
+    return _plan_category("diagrams", "plan_diagrams.md", input_data)
+
+
+@activity.defn(name="vfx_plan_timelines")
+def plan_timelines(input_data: dict) -> dict:
+    """LLM analyzes transcript for timeline/journey opportunities."""
+    return _plan_category("timelines", "plan_timelines.md", input_data)
+
+
+@activity.defn(name="vfx_plan_quotes")
+def plan_quotes(input_data: dict) -> dict:
+    """LLM analyzes transcript for key quotes and callout opportunities."""
+    return _plan_category("quotes", "plan_quotes.md", input_data)
+
+
+@activity.defn(name="vfx_plan_code_blocks")
+def plan_code_blocks(input_data: dict) -> dict:
+    """LLM analyzes transcript for code snippet opportunities."""
+    return _plan_category("code_blocks", "plan_code_blocks.md", input_data)
+
+
+@activity.defn(name="vfx_plan_comparisons")
+def plan_comparisons(input_data: dict) -> dict:
+    """LLM analyzes transcript for comparison/versus opportunities."""
+    return _plan_category("comparisons", "plan_comparisons.md", input_data)
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,8 @@ from pathlib import Path
 
 from temporalio import activity
 
-from video_effects.helpers.llm import call_structured 
+from video_effects.helpers.face_tracking import detect_faces, smooth_data, _probe_decoded_size
+from video_effects.helpers.llm import call_structured
 from video_effects.helpers.remotion import composite_overlay, render_media, render_still
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
 from video_effects.schemas.mg_templates import (
@@ -218,6 +219,89 @@ def _validate_props(
 
 
 # ---------------------------------------------------------------------------
+# Face detection (runs before G8a so face cache exists)
+# ---------------------------------------------------------------------------
+
+
+@activity.defn(name="vfx_detect_faces")
+def detect_faces_activity(input_data: dict) -> dict:
+    """Run full-video face detection and write cache for downstream activities.
+
+    Input: {
+        "video_path": str,
+        "video_info": dict,
+        "cache_dir": str,
+    }
+    Output: {
+        "face_data_path": str,
+        "frames_detected": int,
+        "from_cache": bool,
+    }
+    """
+    video_path = input_data["video_path"]
+    video_info = input_data["video_info"]
+    cache_dir = input_data["cache_dir"]
+
+    fps = video_info.get("fps", 30)
+    duration = video_info.get("duration", 0)
+    total_frames = video_info.get("total_frames", 0) or int(duration * fps)
+
+    os.makedirs(cache_dir, exist_ok=True)
+    face_data_path = os.path.join(cache_dir, "face_tracking_zoom.json")
+
+    # Check for existing valid cache (dimensions must match)
+    if os.path.exists(face_data_path):
+        try:
+            with open(face_data_path) as f:
+                raw = json.load(f)
+            cached_data = raw.get("face_data", raw) if isinstance(raw, dict) else raw
+            cached_dims = raw.get("dimensions") if isinstance(raw, dict) else None
+            decoded_w, decoded_h = _probe_decoded_size(video_path)
+
+            if (cached_dims
+                    and cached_dims.get("width") == decoded_w
+                    and cached_dims.get("height") == decoded_h
+                    and len(cached_data) >= total_frames):
+                logger.info("Face detection cache valid: %d frames", len(cached_data))
+                return {
+                    "face_data_path": face_data_path,
+                    "frames_detected": len(cached_data),
+                    "from_cache": True,
+                }
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("Invalid face cache, re-detecting")
+
+    activity.heartbeat("Starting full-video face detection")
+
+    face_data = detect_faces(
+        video_path=video_path,
+        active_ranges=[(0, total_frames - 1)],
+        total_frames=total_frames,
+    )
+
+    activity.heartbeat("Smoothing face data")
+
+    smoothed = smooth_data(face_data)
+    smoothed_list = [tuple(int(v) for v in row) for row in smoothed]
+
+    decoded_w, decoded_h = _probe_decoded_size(video_path)
+    cache_payload = {
+        "face_data": smoothed_list,
+        "dimensions": {"width": decoded_w, "height": decoded_h},
+    }
+
+    with open(face_data_path, "w") as f:
+        json.dump(cache_payload, f)
+
+    logger.info("Face detection complete: %d frames written to %s", len(smoothed_list), face_data_path)
+    return {
+        "face_data_path": face_data_path,
+        "frames_detected": len(smoothed_list),
+        "from_cache": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # G8a: Build Remotion context (face tracking + transcript + effects)
 # ---------------------------------------------------------------------------
 
@@ -330,6 +414,7 @@ def build_remotion_context(input_data: dict) -> dict:
         "opencv_effects": effects,
         "face_data_path": face_data_path if face_data else "",
         "zoom_state_path": zoom_state_path,
+        "subtitle_region": {"x": 0.0, "y": 0.78, "w": 1.0, "h": 0.22} if segments else None,
     }
 
     logger.info(
@@ -634,6 +719,9 @@ def _find_best_free_placement(
     if new_h > best["h"]:
         new_h = best["h"]
         new_w = new_h * aspect
+    # Reject placement if shrinking would reduce area below 60% of original
+    if (new_w * new_h) < 0.6 * (comp_w * comp_h):
+        return None
     px = round(best["x"] + (best["w"] - new_w) / 2, 3)
     py = round(best["y"] + (best["h"] - new_h) / 2, 3)
     return px, py, round(new_w, 3), round(new_h, 3)
@@ -644,11 +732,16 @@ def _resolve_all_conflicts(
     face_windows: list[dict],
     edge_aligned_templates: set[str],
     issues: list[str],
+    static_obstacles: list[dict] | None = None,
+    safe_frame: dict | None = None,
 ) -> bool:
     """Single-pass free-rectangle tiling to resolve face and inter-component overlaps.
 
     Process in z_index descending order so higher-priority components are placed
     first and become obstacles for subsequent ones.
+
+    static_obstacles are time-independent rects added to every component's obstacle
+    list (e.g. subtitle zone).
 
     Returns True if any component was moved.
     """
@@ -673,8 +766,12 @@ def _resolve_all_conflicts(
             })
             continue
 
-        # Build obstacles: padded face rects + already-placed component rects
+        # Build obstacles: padded face rects + already-placed component rects + static obstacles
         obstacles: list[dict] = []
+
+        # Static obstacles (e.g. subtitle zone) apply to all components
+        if static_obstacles:
+            obstacles.extend(static_obstacles)
 
         for fw in face_windows:
             if comp["start_time"] >= fw.get("end_time", 0) or fw.get("start_time", 0) >= comp["end_time"]:
@@ -699,7 +796,8 @@ def _resolve_all_conflicts(
         if has_conflict:
             original_cx = bounds.get("x", 0) + bw / 2
             original_cy = bounds.get("y", 0) + bh / 2
-            free_rects = _compute_free_rects(_SAFE_FRAME, obstacles)
+            _frame = safe_frame or _SAFE_FRAME
+            free_rects = _compute_free_rects(_frame, obstacles)
             result = _find_best_free_placement(bw, bh, free_rects, (original_cx, original_cy))
             if result:
                 new_x, new_y, new_w, new_h = result
@@ -726,6 +824,7 @@ def _validate_plan(
     components: list[dict],
     context: dict,
     fps: float,
+    static_obstacles: list[dict] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Validate and fix motion graphics plan.
 
@@ -745,6 +844,10 @@ def _validate_plan(
     duration = context.get("video", {}).get("duration", 999)
 
     # 1. Hard bounds clamping — keep components within safe frame
+    # Subtitle zone acts as a hard bottom boundary (move up, preserve size)
+    subtitle_region = context.get("subtitle_region")
+    bottom_limit = subtitle_region["y"] if subtitle_region else 0.98
+
     for comp in components:
         bounds = comp.get("bounds", {})
         bx = bounds.get("x", 0.1)
@@ -760,11 +863,15 @@ def _validate_plan(
         bx = max(0.02, min(bx, 0.98))
         by = max(0.02, min(by, 0.98))
 
-        # Clamp right/bottom edges
+        # Clamp right edge
         if bx + bw > 0.98:
             bw = 0.98 - bx
-        if by + bh > 0.98:
-            bh = 0.98 - by
+
+        # Clamp bottom edge to subtitle boundary — move up first, shrink only as last resort
+        if by + bh > bottom_limit:
+            by = max(0.02, bottom_limit - bh)
+            if by + bh > bottom_limit:
+                bh = bottom_limit - by
 
         if (bx, by, bw, bh) != (bounds.get("x"), bounds.get("y"), bounds.get("w"), bounds.get("h")):
             issues.append(f"Clamped {comp.get('template', '?')} bounds to safe frame")
@@ -882,8 +989,13 @@ def _validate_plan(
                 issues.append(f"Shifted {comp['template']} past zoom (transition window too short)")
 
     # 7. Single-pass free-rectangle tiling (face + inter-component conflicts)
+    # Use a subtitle-aware safe frame so tiling never relocates components
+    # back into the subtitle zone (undoing the step-1 clamp).
     face_windows = context.get("face_windows", [])
-    _resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues)
+    tiling_safe_frame = dict(_SAFE_FRAME)
+    if subtitle_region:
+        tiling_safe_frame["h"] = subtitle_region["y"] - tiling_safe_frame["y"]
+    _resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues, static_obstacles, tiling_safe_frame)
 
     logger.info("Validation: %d components kept, %d issues", len(components), len(issues))
     return components, issues
@@ -918,6 +1030,7 @@ def validate_merged_plan(input_data: dict) -> dict:
         "components": list[dict],      # merged components (time-domain, not frame-domain)
         "spatial_context": dict,        # output of G8a
         "video_fps": int,
+        "static_obstacles": list[dict], # optional time-independent obstacle rects
     }
     Output: {
         "components": list[dict],
@@ -927,7 +1040,8 @@ def validate_merged_plan(input_data: dict) -> dict:
     components = input_data["components"]
     context = input_data["spatial_context"]
     fps = input_data.get("video_fps", 30)
-    validated, issues = _validate_plan(components, context, fps)
+    static_obstacles = input_data.get("static_obstacles")
+    validated, issues = _validate_plan(components, context, fps, static_obstacles)
     if issues:
         logger.info("Post-merge validation: %s", issues)
     return {"components": validated, "validation_issues": issues}

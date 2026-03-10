@@ -2,14 +2,24 @@
 
 The infographics pipeline generates custom React/Remotion components from transcript analysis. An LLM writes TSX code that is validated, retried on failure, and falls back to existing templates as a safety net.
 
+> **Note:** Both `--mg` and `--infographics` now route through this pipeline. The old template-based MG planner (`_plan_motion_graphics`) has been removed — all overlays are generated via code-gen.
+
 ## Pipeline Overview
 
 ```
 A0: Cleanup generated/
  │
  ▼
-A1: Plan Infographics (LLM)
- │  "What data moments deserve custom visualizations?"
+A1: Parallel Category Planners (6 LLM calls)
+ │  ├─ vfx_plan_infographics  (charts, dashboards)
+ │  ├─ vfx_plan_diagrams      (flowcharts, mind maps)
+ │  ├─ vfx_plan_timelines     (chronological events)
+ │  ├─ vfx_plan_quotes        (key takeaways, callouts)
+ │  ├─ vfx_plan_code_blocks   (code snippets, commands)
+ │  └─ vfx_plan_comparisons   (side-by-side, A vs B)
+ │
+ ▼
+Merge: concat all specs, sort by score desc, take top 6
  │
  ├──► For each spec:
  │
@@ -39,23 +49,32 @@ A4: Build Generated Registry
 - Workflow: `infographic_workflow.py`
 - Activities: `activities/infographic.py`
 - Schemas: `schemas/infographic.py`
-- Prompts: `prompts/plan_infographics.md`, `prompts/generate_infographic_code.md`, `prompts/infographic_api_reference.md`
+- Planning prompts: `prompts/plan_infographics.md`, `prompts/plan_diagrams.md`, `prompts/plan_timelines.md`, `prompts/plan_quotes.md`, `prompts/plan_code_blocks.md`, `prompts/plan_comparisons.md`
+- Code gen prompts: `prompts/generate_infographic_code.md`, `prompts/infographic_api_reference.md`
+- Utilities: `remotion/src/lib/component-utils.ts`
 - Output: `remotion/src/components/generated/`
 
-## A1: Plan Infographics
+## A1: Parallel Category Planners
 
-**Activity:** `vfx_plan_infographics`
-**Prompt:** `prompts/plan_infographics.md`
+Six specialist planners run concurrently via `asyncio.gather`. Each analyzes the transcript from its own perspective and outputs 0–3 specs with a confidence `score` (0–100). Results are merged, sorted by score, and the top 6 are selected.
+
+| Activity | Prompt | Specialization |
+|----------|--------|----------------|
+| `vfx_plan_infographics` | `plan_infographics.md` | Charts, stat dashboards, data visualizations |
+| `vfx_plan_diagrams` | `plan_diagrams.md` | Flowcharts, mind maps, process flows, architectures |
+| `vfx_plan_timelines` | `plan_timelines.md` | Chronological events, milestones, journeys |
+| `vfx_plan_quotes` | `plan_quotes.md` | Key takeaways, citations, callout cards |
+| `vfx_plan_code_blocks` | `plan_code_blocks.md` | Code snippets, commands, technical syntax |
+| `vfx_plan_comparisons` | `plan_comparisons.md` | Side-by-side, A vs B, pros/cons |
+
 **Model:** `VFX_INFOGRAPHIC_LLM_MODEL` (default: claude-opus-4-6)
 
-The LLM analyzes the transcript for data-rich moments and decides *what* to visualize — not *how* to code it.
+All planners share the `_plan_category()` helper which loads the category-specific prompt, builds the user message (video info, face windows, transcript), and calls `call_structured()` with `InfographicPlanResponse`.
 
-**Constraints:**
-- Max 4 infographics per video
-- 3–8 seconds visibility each
-- 2+ seconds apart (no temporal overlap)
-- Only concrete data (numbers, stats, comparisons) — not vague opinions
-- Must fit in face-tracking safe regions
+**Merge logic:**
+1. Concatenate all specs from all planners (failed planners are logged and skipped)
+2. Sort by `score` descending
+3. Take top 6 specs
 
 ### Infographic Types
 
@@ -69,6 +88,9 @@ class InfographicType(str, Enum):
     COMPARISON = "comparison"
     PROCESS = "process"
     STAT_DASHBOARD = "stat_dashboard"
+    DIAGRAM = "diagram"
+    QUOTE = "quote"
+    CODE_BLOCK = "code_block"
     CUSTOM = "custom"
 ```
 
@@ -80,10 +102,13 @@ Each type expects specific JSON in the `data` field:
 |------|-----------|
 | Charts (pie, bar, line) | `{"items": [{"label": "...", "value": N}], "unit": "%"}` |
 | Flowchart | `{"nodes": [{"id": "1", "text": "..."}], "edges": [{"from": "1", "to": "2"}]}` |
-| Timeline | `{"events": [{"label": "...", "year": "2020"}]}` |
-| Comparison | `{"left": {"title": "A", "items": [...]}, "right": {"title": "B", "items": [...]}}` |
+| Timeline | `{"events": [{"label": "...", "description?": "...", "date?": "2020"}], "orientation": "horizontal"}` |
+| Comparison | `{"left": {"title": "A", "items": [...]}, "right": {"title": "B", "items": [...]}, "style": "versus"}` |
 | Process | `{"steps": [{"number": 1, "title": "...", "detail": "..."}]}` |
 | Stat Dashboard | `{"stats": [{"label": "...", "value": N, "suffix": "%"}]}` |
+| Diagram | `{"nodes": [{"id": "1", "label": "..."}], "edges": [{"from": "1", "to": "2", "label?": "..."}], "layout": "horizontal"}` |
+| Quote | `{"text": "...", "attribution?": "...", "source?": "...", "style": "quote"}` |
+| Code Block | `{"code": "...", "language": "javascript", "highlightLines?": [1], "title?": "..."}` |
 
 ### Output Schema
 
@@ -94,6 +119,7 @@ class InfographicSpec(BaseModel):
     title: str                              # 2-5 words
     description: str
     data: dict
+    score: float = 50                       # confidence score (0-100) for ranking
     start_time: float
     end_time: float
     bounds: dict                            # {x, y, w, h} normalized 0-1
@@ -135,6 +161,8 @@ From `../../lib/styles`: `useStyle`
 From `../../lib/easing`: `SPRING_GENTLE`, `SPRING_BOUNCY`, `SPRING_SNAPPY`, `SPRING_SMOOTH`
 
 From `../../lib/infographic-utils`: `polarToCartesian`, `describeArc`, `generateTicks`, `linearScale`, `colorWithOpacity`, `lerpColor`
+
+From `../../lib/component-utils`: `drawConnector`, `distributeEvenly`, `tokenize`
 
 From `../../types`: `NormalizedRect`, `AnchorMode`
 
@@ -217,6 +245,9 @@ FALLBACK_MAP = {
     PROCESS:        ("listicle", "slide"),
     FLOWCHART:      ("listicle", "slide"),
     STAT_DASHBOARD: ("data_animation", "stat-callout"),
+    DIAGRAM:        ("listicle", "slide"),
+    QUOTE:          ("animated_title", "fade"),
+    CODE_BLOCK:     ("animated_title", "fade"),
     CUSTOM:         ("animated_title", "fade"),
 }
 ```

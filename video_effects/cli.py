@@ -159,8 +159,8 @@ async def run_workflow(args) -> None:
     client = await get_client()
 
     workflow_id = f"vfx-{uuid.uuid4().hex[:8]}"
-    enable_infographics = getattr(args, "infographics", False)
-    # Infographics require motion graphics (they merge into the MG overlay)
+    # --mg and --infographics both route through the code-gen pipeline
+    enable_infographics = getattr(args, "infographics", False) or args.motion_graphics
     enable_mg = args.motion_graphics or enable_infographics
 
     input_data = VideoEffectsInput(
@@ -237,54 +237,6 @@ async def run_workflow(args) -> None:
                 print(f"  Error: {error}")
             return
 
-    # ── Motion graphics approval (if enabled and not auto-approve) ──
-    if args.motion_graphics and not args.auto_approve:
-        mg_approved = False
-        for mg_attempt in range(5):
-            msg = "Waiting for motion graphics plan..." if mg_attempt == 0 else "Waiting for revised MG plan..."
-            print(f"\n{msg}")
-            prev_mg = mg_plan if mg_attempt > 0 else None
-            mg_plan = None
-            for _ in range(180):  # 3 minutes max (LLM call can be slow)
-                await asyncio.sleep(1)
-                try:
-                    mg_plan = await handle.query("get_mg_plan")
-                    if mg_plan is not None and mg_plan != prev_mg:
-                        break
-                except Exception:
-                    pass
-
-            if mg_plan is None or mg_plan == prev_mg:
-                # Workflow may have already finished (no MG components, or auto-skipped)
-                print("No motion graphics plan to review (may have been skipped).")
-                break
-
-            if not mg_plan.get("components"):
-                print("LLM decided no motion graphics needed for this video.")
-                break
-
-            _print_mg_plan(mg_plan)
-
-            while True:
-                choice = input("\nApprove MG plan? [y/n/json]: ").strip().lower()
-                if choice in ("y", "yes"):
-                    await handle.signal("approve_mg_plan", [True, ""])
-                    print("MG plan approved. Rendering overlay...")
-                    mg_approved = True
-                    break
-                elif choice in ("n", "no"):
-                    feedback = input("Feedback (what to change): ").strip()
-                    await handle.signal("approve_mg_plan", [False, feedback])
-                    print(f"MG plan rejected. Re-planning... (attempt {mg_attempt + 2}/5)")
-                    break
-                elif choice == "json":
-                    print(json.dumps(mg_plan, indent=2))
-                else:
-                    print("Please enter y, n, or json")
-
-            if mg_approved:
-                break
-
     # Wait for completion
     print("\nWaiting for workflow completion...")
     result = await handle.result()
@@ -331,7 +283,7 @@ def main():
     run_parser.add_argument(
         "--motion-graphics", "--mg",
         action="store_true",
-        help="Enable Remotion motion graphics overlay",
+        help="Enable code-gen motion graphics overlays (routes through infographic pipeline)",
     )
     run_parser.add_argument(
         "--style", "-s",
@@ -352,7 +304,7 @@ def main():
     run_parser.add_argument(
         "--infographics",
         action="store_true",
-        help="Enable LLM-generated infographic overlays (requires --motion-graphics)",
+        help="Enable LLM-generated infographic overlays (same as --mg)",
     )
 
     args = parser.parse_args()

@@ -14,8 +14,13 @@ The system uses Claude for five distinct tasks: effect cue parsing, style detect
 | `prompts/parse_effect_cues.md` | Infer effects from transcript energy | `vfx_parse_effect_cues` | `ParsedEffectCues` |
 | `prompts/parse_effect_cues_dev.md` | Parse explicit verbal commands | `vfx_parse_effect_cues` (dev mode) | `ParsedEffectCues` |
 | `prompts/design_style.md` | Auto-select style preset | `vfx_design_style` | `StyleDesignResponse` |
-| `prompts/plan_motion_graphics_base.md` | Plan overlay placements | `vfx_plan_motion_graphics` | `MotionGraphicsPlanResponse` |
+| `prompts/plan_motion_graphics_base.md` | ~~Plan overlay placements~~ (deprecated — old MG planner disabled, overlays now via code-gen) | ~~`vfx_plan_motion_graphics`~~ | `MotionGraphicsPlanResponse` |
 | `prompts/plan_infographics.md` | Identify data visualization moments | `vfx_plan_infographics` | `InfographicPlanResponse` |
+| `prompts/plan_diagrams.md` | Identify diagram/flowchart moments | `vfx_plan_diagrams` | `InfographicPlanResponse` |
+| `prompts/plan_timelines.md` | Identify timeline/journey moments | `vfx_plan_timelines` | `InfographicPlanResponse` |
+| `prompts/plan_quotes.md` | Identify key quotes/callouts | `vfx_plan_quotes` | `InfographicPlanResponse` |
+| `prompts/plan_code_blocks.md` | Identify code snippet moments | `vfx_plan_code_blocks` | `InfographicPlanResponse` |
+| `prompts/plan_comparisons.md` | Identify comparison/versus moments | `vfx_plan_comparisons` | `InfographicPlanResponse` |
 | `prompts/generate_infographic_code.md` | Write TSX component code | `vfx_generate_infographic_code` | Raw text (TSX) |
 | `prompts/infographic_api_reference.md` | Allowed imports for generated code | (embedded in codegen prompt) | — |
 | `prompts/mg_guidance/animated_title.md` | Creative guidance for AnimatedTitle | (embedded in MG prompt) | — |
@@ -112,11 +117,18 @@ Max tokens: 8192. Markdown fencing is stripped from the response.
 - `{STYLE_GUIDE}` with palette, preferred/avoided animations, density range, template preferences
 - `{TEMPLATES}` with full prop specs, duration ranges, placement constraints, and per-template creative guidance from `mg_guidance/*.md`
 
-### plan_infographics.md
+### Category Planning Prompts (6 parallel planners)
 
-**Purpose:** Identify data-rich moments in the transcript that deserve custom infographic visualizations.
+All category planners share the same structure: rules, data format, positioning guide, and a `{STYLE_GUIDE}` slot. They use the shared `_plan_category()` helper and return `InfographicPlanResponse` with a `score` per spec.
 
-**Rules:** Only concrete data (numbers, stats, comparisons), max 4 per video, 3–8s visibility, 2s+ apart, must fit in safe regions.
+| Prompt | Category | Key Rules |
+|--------|----------|-----------|
+| `plan_infographics.md` | Charts, stat dashboards | Only concrete data, max 4, 3–8s |
+| `plan_diagrams.md` | Flowcharts, mind maps, architectures | Clear structure (nodes + edges), max 3, 4–8s |
+| `plan_timelines.md` | Chronological events, milestones | 3+ sequential events, max 3, 4–8s |
+| `plan_quotes.md` | Key takeaways, citations, callouts | Genuinely impactful statements, max 3, 3–6s |
+| `plan_code_blocks.md` | Code snippets, commands | Specific code mentioned in transcript, max 3, 4–8s |
+| `plan_comparisons.md` | Side-by-side, A vs B, pros/cons | Clear two-sided structure, max 3, 4–8s |
 
 ### generate_infographic_code.md
 
@@ -184,17 +196,15 @@ LLM generates TSX → Validate (tsc + render)
 
 ## HITL Approval Flow
 
-Two approval gates in the main workflow, controlled by signals:
+One approval gate in the main workflow, controlled by signals:
 
 | Signal | Triggered By | Max Retries |
 |--------|-------------|-------------|
 | `approve_timeline(bool, feedback)` | CLI after displaying effect table | 5 |
-| `approve_mg_plan(bool, feedback)` | CLI after displaying MG plan | 5 |
 
 Skippable via `--auto-approve` CLI flag (sets `VideoEffectsInput.auto_approve = True`).
 
 CLI display functions:
 - `_print_timeline()` — Pretty-prints effect table (type, timing, confidence, cue text)
-- `_print_mg_plan()` — Pretty-prints MG component table (template, timing, props, reasoning)
 
-Both support `json` input to view raw data.
+Supports `json` input to view raw data.

@@ -25,6 +25,10 @@ with workflow.unsafe.imports_passed_through():
 
 MAX_RETRIES = 5
 
+# Subtitle zone bounds (normalized 0-1) — used for both the subtitle component
+# and as a spatial obstacle to keep other overlays out of this region.
+SUBTITLE_BOUNDS = {"x": 0.0, "y": 0.78, "w": 1.0, "h": 0.22}
+
 
 @workflow.defn(name="VideoEffectsWorkflow")
 class VideoEffectsWorkflow:
@@ -33,10 +37,6 @@ class VideoEffectsWorkflow:
         self._approval_decision: bool | None = None  # None = pending, True = approved, False = rejected
         self._rejection_feedback: str = ""
         self._timeline_data: dict | None = None
-        # Motion graphics approval state
-        self._mg_plan_data: dict | None = None
-        self._mg_approval_decision: bool | None = None
-        self._mg_rejection_feedback: str = ""
 
     @workflow.signal
     async def approve_timeline(self, args: list) -> None:
@@ -47,24 +47,10 @@ class VideoEffectsWorkflow:
         self._approval_decision = args[0]
         self._rejection_feedback = args[1] if len(args) > 1 else ""
 
-    @workflow.signal
-    async def approve_mg_plan(self, args: list) -> None:
-        """Signal from CLI to approve or reject the motion graphics plan.
-
-        Args is [approved: bool, feedback: str].
-        """
-        self._mg_approval_decision = args[0]
-        self._mg_rejection_feedback = args[1] if len(args) > 1 else ""
-
     @workflow.query
     def get_timeline(self) -> dict | None:
         """Query to get the current timeline for CLI display."""
         return self._timeline_data
-
-    @workflow.query
-    def get_mg_plan(self) -> dict | None:
-        """Query to get the current motion graphics plan for CLI display."""
-        return self._mg_plan_data
 
     @workflow.run
     async def run(self, input: VideoEffectsInput) -> VideoEffectsOutput:
@@ -249,9 +235,10 @@ class VideoEffectsWorkflow:
                 grading_preset, grading_intensity * 100,
             )
 
-        enable_infographics = getattr(input, "enable_infographics", False)
+        # --mg and --infographics both route through the code-gen pipeline
+        enable_infographics = getattr(input, "enable_infographics", False) or input.enable_motion_graphics
         has_transcript = bool(transcript_result.get("segments"))
-        if not effects and not input.enable_motion_graphics and not enable_infographics and not has_transcript:
+        if not effects and not enable_infographics and not has_transcript:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=0,
@@ -265,13 +252,25 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=activity_timeout,
         )
 
-        if not render_plan.get("has_effects") and not input.enable_motion_graphics and not enable_infographics and not has_transcript:
+        if not render_plan.get("has_effects") and not enable_infographics and not has_transcript:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=len(effects),
                 transcript_length=len(transcript_result["transcript"]),
                 phases_executed=0,
             )
+
+        # ── Face detection (before G8a so face cache exists) ──
+        await workflow.execute_activity(
+            "vfx_detect_faces",
+            {
+                "video_path": video_path,
+                "video_info": video_info,
+                "cache_dir": temp_dir,
+            },
+            start_to_close_timeout=long_timeout,
+            heartbeat_timeout=timedelta(minutes=5),
+        )
 
         # ── G8a: Build spatial context (shared by MG planning + infographics + subtitles) ──
         spatial_context = None
@@ -288,24 +287,7 @@ class VideoEffectsWorkflow:
                 start_to_close_timeout=activity_timeout,
             )
 
-        # ── G8b: MG planning + approval (parallel with G6b-G7) ──
-        mg_plan_task = None
-        if input.enable_motion_graphics and spatial_context:
-            mg_plan_task = self._plan_motion_graphics(
-                spatial_context=spatial_context,
-                video_info=video_info,
-                transcript=transcript_result["transcript"],
-                segments=transcript_result["segments"],
-                effects=effects,
-                style_hint=input.style,
-                style_config=style_config,
-                style_preset_name=style_preset_name,
-                temp_dir=temp_dir,
-                auto_approve=input.auto_approve,
-                activity_timeout=activity_timeout,
-            )
-
-        # ── Infographic generation (parallel with MG planning + video render) ──
+        # ── Infographic generation (parallel with video render) ──
         infographic_task = None
         if enable_infographics and spatial_context:
             wf_prefix = workflow.info().workflow_id.split("-")[-1][:6]
@@ -346,10 +328,8 @@ class VideoEffectsWorkflow:
             heartbeat_timeout=timedelta(minutes=2),
         )
 
-        # Wait for render + MG plan + infographic gen in parallel
+        # Wait for render + infographic gen in parallel
         parallel_tasks = [render_task]
-        if mg_plan_task is not None:
-            parallel_tasks.append(mg_plan_task)
         if infographic_task is not None:
             parallel_tasks.append(infographic_task)
 
@@ -357,13 +337,7 @@ class VideoEffectsWorkflow:
         apply_result = results[0]
 
         mg_plan = None
-        infographic_result = None
-        idx = 1
-        if mg_plan_task is not None:
-            mg_plan = results[idx]
-            idx += 1
-        if infographic_task is not None:
-            infographic_result = results[idx]
+        infographic_result = results[1] if infographic_task is not None else None
 
         # ── G7: Final composition + audio mux ──
         compose_result = await workflow.execute_activity(
@@ -379,6 +353,10 @@ class VideoEffectsWorkflow:
 
         base_output = compose_result["output_video"]
         mg_applied = 0
+
+        # Pre-compute word segments (needed for subtitle obstacle + subtitle injection)
+        subtitle_segments = transcript_result.get("segments", [])
+        word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
 
         # ── Merge infographic components into MG plan ──
         if infographic_result is not None:
@@ -425,6 +403,7 @@ class VideoEffectsWorkflow:
                         "components": time_domain_comps,
                         "spatial_context": spatial_context,
                         "video_fps": fps,
+                        "static_obstacles": [SUBTITLE_BOUNDS] if word_segments else [],
                     },
                     start_to_close_timeout=activity_timeout,
                 )
@@ -448,8 +427,6 @@ class VideoEffectsWorkflow:
                     )
 
         # ── Always inject subtitles from transcript ──
-        subtitle_segments = transcript_result.get("segments", [])
-        word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
         if word_segments:
             fps = int(video_info.get("fps", 30))
 
@@ -478,7 +455,7 @@ class VideoEffectsWorkflow:
                     "words": subtitle_words,
                     "fontSize": 44,
                 },
-                "bounds": {"x": 0.1, "y": 0.78, "w": 0.8, "h": 0.16},
+                "bounds": {"x": 0.1, "y": SUBTITLE_BOUNDS["y"], "w": 0.8, "h": 0.16},
                 "zIndex": 100,  # Subtitles always on top
                 "anchor": "static",
             }
@@ -519,98 +496,6 @@ class VideoEffectsWorkflow:
             phases_executed=apply_result["phases_executed"],
             motion_graphics_applied=mg_applied,
         )
-
-    async def _plan_motion_graphics(
-        self,
-        *,
-        spatial_context: dict,
-        video_info: dict,
-        transcript: str,
-        segments: list,
-        effects: list,
-        style_hint: str,
-        style_config: dict | None = None,
-        style_preset_name: str = "",
-        temp_dir: str,
-        auto_approve: bool,
-        activity_timeout: timedelta,
-    ) -> dict | None:
-        """Run G8b: LLM plan, approval loop.
-
-        Spatial context (G8a) is now built externally and passed in.
-        Returns approved composition plan dict, or None if skipped/rejected.
-        Runs in parallel with G6b-G7 (no dependency on rendered video).
-        """
-        fps = int(video_info.get("fps", 30))
-
-        # ── G8b: LLM plan motion graphics (with approval loop) ──
-        mg_feedback = ""
-        plan = {}
-        for attempt in range(MAX_RETRIES):
-            plan_input = {
-                "spatial_context": spatial_context,
-                "style_hint": style_hint,
-                "style_config": style_config,
-                "style_preset_name": style_preset_name,
-                "video_fps": fps,
-            }
-            if mg_feedback:
-                plan_input["feedback"] = mg_feedback
-
-            plan_result = await workflow.execute_activity(
-                "vfx_plan_motion_graphics",
-                plan_input,
-                start_to_close_timeout=activity_timeout,
-            )
-
-            plan = plan_result.get("composition_plan", {})
-            issues = plan_result.get("validation_issues", [])
-
-            # Expose plan for CLI query
-            self._mg_plan_data = {
-                "components": plan.get("components", []),
-                "color_palette": plan.get("colorPalette", []),
-                "reasoning": plan_result.get("raw_plan", {}).get("reasoning", ""),
-                "validation_issues": issues,
-            }
-
-            if not plan.get("components"):
-                workflow.logger.info("LLM produced no motion graphics components, skipping")
-                return None
-
-            if issues:
-                workflow.logger.info("MG validation issues: %s", issues)
-
-            if auto_approve:
-                break
-
-            # Wait for CLI approval
-            self._mg_approval_decision = None
-            self._mg_rejection_feedback = ""
-
-            try:
-                await workflow.wait_condition(
-                    lambda: self._mg_approval_decision is not None,
-                    timeout=timedelta(minutes=10),
-                )
-            except asyncio.TimeoutError:
-                workflow.logger.warning("MG plan approval timed out, proceeding with current plan")
-                break
-
-            if self._mg_approval_decision:
-                break  # Approved
-
-            # Rejected — loop with feedback
-            mg_feedback = self._mg_rejection_feedback or "User rejected the motion graphics plan. Try different choices."
-            workflow.logger.info(
-                "MG plan rejected (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, mg_feedback
-            )
-            self._mg_plan_data = None  # Clear so CLI can detect new plan
-        else:
-            workflow.logger.warning("MG plan rejected %d times, skipping motion graphics", MAX_RETRIES)
-            return None
-
-        return plan if plan.get("components") else None
 
     async def _render_and_composite_mg(
         self,

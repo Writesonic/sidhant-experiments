@@ -15,6 +15,9 @@ class InfographicType(str, Enum):
     COMPARISON = "comparison"
     PROCESS = "process"
     STAT_DASHBOARD = "stat_dashboard"
+    DIAGRAM = "diagram"
+    QUOTE = "quote"
+    CODE_BLOCK = "code_block"
     CUSTOM = "custom"
 
 
@@ -26,6 +29,7 @@ class InfographicSpec(BaseModel):
     title: str = Field(description="Display title for the infographic")
     description: str = Field(description="What this infographic should show")
     data: dict = Field(default_factory=dict, description="Data to visualize (labels, values, etc.)")
+    score: float = Field(default=50, description="Confidence score (0-100) for ranking")
     start_time: float = Field(description="When to show (seconds)")
     end_time: float = Field(description="When to hide (seconds)")
     bounds: dict = Field(
@@ -69,5 +73,8 @@ FALLBACK_MAP: dict[InfographicType, tuple[str, str]] = {
     InfographicType.PROCESS: ("listicle", "slide"),
     InfographicType.FLOWCHART: ("listicle", "slide"),
     InfographicType.STAT_DASHBOARD: ("data_animation", "stat-callout"),
+    InfographicType.DIAGRAM: ("listicle", "slide"),
+    InfographicType.QUOTE: ("animated_title", "fade"),
+    InfographicType.CODE_BLOCK: ("animated_title", "fade"),
     InfographicType.CUSTOM: ("animated_title", "fade"),
 }
