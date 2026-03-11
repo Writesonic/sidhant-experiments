@@ -49,15 +49,12 @@ class StylePreset(BaseModel):
 class StyleDesignResponse(BaseModel):
     """Structured output from the creative designer LLM."""
 
-    preset: str
-    adjustments: dict[str, Any] = Field(default_factory=dict)
+    preset: str 
+    adjustments: dict[str, Any] = Field(default_factory=dict) #TODO: This should be a pydantic model instead of a dict.
     reasoning: str
 
 
-# ---------------------------------------------------------------------------
-# Preset definitions
-# ---------------------------------------------------------------------------
-
+# TODO: More research needs to go into how we can make this more dynamic and flexible.
 STYLE_PRESETS: dict[str, StylePreset] = {
     "default": StylePreset(
         name="default",

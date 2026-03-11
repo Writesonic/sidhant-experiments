@@ -5,7 +5,8 @@ from pathlib import Path
 
 from temporalio import activity
 
-from video_effects.helpers.llm import call_structured
+from video_effects.config import settings
+from video_effects.helpers.llm import call_structured, call_text
 from video_effects.schemas.styles import (
     StyleConfig,
     StyleDesignResponse,
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-
+#TODO: This can be 2 haiku calls instead of 1 sonnet calls. To be honest I don't even know if we need this because we always get styles anyway. Maybe for future use.
 @activity.defn(name="vfx_design_style")
 def design_style(input_data: dict) -> dict:
     """Pick and customize a style preset based on transcript + video metadata.
@@ -40,10 +41,18 @@ def design_style(input_data: dict) -> dict:
 
     system_prompt = (_PROMPT_DIR / "design_style.md").read_text()
 
-    # Truncate transcript to ~2000 chars for the LLM
-    excerpt = transcript[:2000]
-    if len(transcript) > 2000:
-        excerpt += "\n... [truncated]"
+    _MAX_TRANSCRIPT_CHARS = 2000
+    if len(transcript) <= _MAX_TRANSCRIPT_CHARS:
+        excerpt = transcript
+    else:
+        activity.heartbeat("Summarizing long transcript for style design")
+        summarizer_prompt = (_PROMPT_DIR / "summarize_transcript.md").read_text()
+        excerpt = call_text(
+            system_prompt=summarizer_prompt,
+            user_message=transcript,
+            model=settings.SMALL_LLM_MODEL,
+            max_tokens=1024,
+        ).strip()
 
     user_message = (
         f"## Video Info\n"
@@ -58,6 +67,7 @@ def design_style(input_data: dict) -> dict:
         system_prompt=system_prompt,
         user_message=user_message,
         response_model=StyleDesignResponse,
+        model=settings.SMALL_LLM_MODEL,
     )
 
     preset_name = raw.get("preset", "default")

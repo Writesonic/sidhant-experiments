@@ -1,19 +1,3 @@
-"""Temporal workflow: VideoEffectsWorkflow.
-
-Pipeline (7+2 groups, G6 split into 3 sub-activities):
-  G1: Extract video info + audio
-  G2: Transcribe audio
-  G3: LLM: parse effect cues from transcript  ─┐
-  G4: Validate timeline + resolve conflicts     │ loops on rejection
-  G5: CLI approval                             ─┘
-  G6a: Prepare render plan (probe, intervals)
-  G6b: Setup processors (face tracking, cache)
-  G6c: Render video (decode → process → encode)
-  G7: Final composition + audio mux
-  G8e: Render Remotion motion graphics overlay   
-  G9:  FFmpeg composite overlay onto base        
-"""
-
 import asyncio
 from datetime import timedelta
 
@@ -25,8 +9,8 @@ with workflow.unsafe.imports_passed_through():
 
 MAX_RETRIES = 5
 
-# Subtitle zone bounds (normalized 0-1) — used for both the subtitle componenct
-# and as a spatial obstacle to keep other overlays out of this region.
+# TODO: This should be calculated based on the video height and font size. Right now its based on the normalised values.
+# TODO: This should be moved to a constant
 SUBTITLE_BOUNDS = {"x": 0.0, "y": 0.78, "w": 1.0, "h": 0.22}
 
 
@@ -45,7 +29,7 @@ class VideoEffectsWorkflow:
         Args is [approved: bool, feedback: str].
         """
         self._approval_decision = args[0]
-        self._rejection_feedback = args[1] if len(args) > 1 else ""
+        self._rejection_feedback = args[1] if len(args) > 1 else "" # TODO:There's a better way to understand that feedback is always some kind of sentence string.
 
     @workflow.query
     def get_timeline(self) -> dict | None:
@@ -62,6 +46,7 @@ class VideoEffectsWorkflow:
         long_timeout = timedelta(minutes=30)
 
         # ── G1: Extract video info + audio (parallel) ──
+        # TODO: Move this to a smaller function outside
         video_info_task = workflow.execute_activity(
             "vfx_get_video_info",
             video_path,
@@ -76,8 +61,8 @@ class VideoEffectsWorkflow:
         video_info, audio_result = await asyncio.gather(
             video_info_task, extract_audio_task
         )
-        audio_path = audio_result["audio_path"]
-        original_audio_path = audio_result["original_audio_path"]
+        audio_path = audio_result.get("audio_path")
+        original_audio_path = audio_result.get("original_audio_path")
 
         # ── G2: Transcribe audio (+ optional jump cut detection in parallel) ──
         transcribe_task = workflow.execute_activity(

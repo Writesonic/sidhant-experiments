@@ -6,7 +6,6 @@ fall back to existing templates on failure.
 """
 
 import asyncio
-import math
 from datetime import timedelta
 
 from temporalio import workflow
