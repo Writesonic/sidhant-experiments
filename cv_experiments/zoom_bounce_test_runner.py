@@ -299,6 +299,35 @@ TEST_CASES = [
             ],
         },
     },
+    {
+        # IMG_3962.MOV duration: ~59.7s, 1920x1080, HLG/BT.2020 HEVC
+        "name": "hdr_test",
+        "input_path": "IMG_3962.MOV",
+        "output_template": "{stem}_hdr_{ts}.mp4",
+        "kwargs": {
+            "stabilize": 0,
+            "debug_labels": True,
+            "bounces": [
+                {"action": "in", "start": 3.0, "end": 3.5, "ease": "smooth", "zoom": 1.35},
+                {"action": "out", "start": 8.0, "end": 8.5, "ease": "snap"},
+                {
+                    "action": "bounce",
+                    "start": 15.0,
+                    "end": 16.0,
+                    "ease": "overshoot",
+                    "zoom": 1.3,
+                },
+                {
+                    "action": "in",
+                    "start": 30.0,
+                    "end": 30.4,
+                    "ease": "snap",
+                    "zoom": 1.4,
+                },
+                {"action": "out", "start": 40.0, "end": 40.5, "ease": "smooth"},
+            ],
+        },
+    },
 ]
 
 

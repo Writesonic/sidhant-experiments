@@ -339,17 +339,34 @@ def detect_best_encoder(codec="h264"):
     return _encoder_cache[codec]
 
 
+_HDR_TONEMAP_VF = (
+    "zscale=t=linear:npl=100,format=gbrpf32le,"
+    "zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
+    "zscale=t=bt709:m=bt709:r=tv,format=rgb24"
+)
+
+_BT709_FLAGS = [
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+]
+
+
 # ─── FFmpeg utilities ─────────────────────────────────────────────────────────
 
 
 def open_ffmpeg_writer(path, w, h, fps, enc, pix_fmt="rgb24"):
     cmd = [
         "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", pix_fmt,
-        "-s", f"{w}x{h}", "-r", str(fps), "-i", "pipe:0", "-c:v", enc,
+        "-s", f"{w}x{h}", "-r", str(fps), "-i", "pipe:0",
     ]
+    if pix_fmt == "rgb24":
+        cmd += ["-vf", "scale=in_range=full:out_range=tv"]
+    cmd += ["-c:v", enc]
     if pix_fmt != "nv12":
         cmd += ["-pix_fmt", "yuv420p"]
     cmd += ["-movflags", "+faststart"]
+    cmd += _BT709_FLAGS
     if enc == "libx264":
         cmd += ["-preset", "fast", "-crf", "18"]
     elif enc == "h264_nvenc":
@@ -404,14 +421,19 @@ def _run_ffmpeg_with_progress(cmd, total_frames, fps):
 
 
 def _extract_passthrough(input_path, output_path, t_start, t_end, enc,
-                         reencode=False):
+                         reencode=False, is_hdr=False):
     """Extract passthrough segment. Stream-copy when possible, re-encode when
-    source codec differs from output codec."""
+    source codec differs from output codec or source is HDR."""
+    if is_hdr:
+        reencode = True
     if reencode:
         cmd = [
             "ffmpeg", "-y", "-ss", str(t_start), "-to", str(t_end),
-            "-i", input_path, "-c:v", enc, "-an",
+            "-i", input_path,
         ]
+        if is_hdr:
+            cmd += ["-vf", _HDR_TONEMAP_VF]
+        cmd += ["-c:v", enc, "-an"]
         if enc == "h264_nvenc":
             cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "20"]
         elif enc == "h264_videotoolbox":
@@ -420,6 +442,7 @@ def _extract_passthrough(input_path, output_path, t_start, t_end, enc,
             cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "22"]
         else:
             cmd += ["-preset", "fast", "-crf", "18"]
+        cmd += _BT709_FLAGS
         cmd.append(output_path)
     else:
         cmd = [
@@ -432,7 +455,7 @@ def _extract_passthrough(input_path, output_path, t_start, t_end, enc,
 
 def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
                         face_data_stable, z, face_side, dest_x_full,
-                        fps, w, h, enc):
+                        fps, w, h, enc, is_hdr=False):
     """
     Render a hold region (constant zoom, slowly drifting face) entirely via
     FFmpeg crop+scale — no Python frame loop.
@@ -509,11 +532,15 @@ def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
         cy_expr = _build_lerp_expr(kf_cy, kf_t)
         vf = f"crop={crop_w}:{crop_h}:'{cx_expr}':'{cy_expr}',scale={w}:{h}:flags=bilinear"
 
+    if is_hdr:
+        vf = _HDR_TONEMAP_VF + "," + vf
     cmd = [
         "ffmpeg", "-y", "-ss", str(t_start), "-to", str(t_end),
         "-i", input_path, "-vf", vf, "-c:v", enc, "-pix_fmt", "yuv420p",
-        "-an", output_path,
+        "-an",
     ]
+    cmd += _BT709_FLAGS
+    cmd.append(output_path)
     if "libx264" in enc:
         cmd[-2:-2] = ["-preset", "ultrafast", "-crf", "18"]
     elif "libsvtav1" in enc:
@@ -541,17 +568,31 @@ def _concat_segments(segment_paths, output_path):
     )
 
 
-def _probe_source_codec(video_path):
-    """Return the video codec name of the source file (e.g. 'h264')."""
+def _probe_source(video_path):
+    """Return (codec_name, is_hdr) for the source video.
+
+    HDR is detected when color_transfer is smpte2084 (HDR10) or arib-std-b67
+    (HLG), or when color_primaries is bt2020.
+    """
     r = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=codec_name", "-of", "csv=p=0",
+            "-show_entries", "stream=codec_name,color_transfer,color_primaries",
+            "-of", "csv=p=0",
             video_path,
         ],
         capture_output=True, text=True,
     )
-    return r.stdout.strip() if r.returncode == 0 else ""
+    if r.returncode != 0:
+        return "", False
+    parts = [p.strip() for p in r.stdout.strip().split(",")]
+    codec = parts[0] if len(parts) > 0 else ""
+    transfer = parts[1] if len(parts) > 1 else ""
+    primaries = parts[2] if len(parts) > 2 else ""
+    is_hdr = transfer in ("smpte2084", "arib-std-b67") or primaries == "bt2020"
+    if is_hdr:
+        print(f"   HDR detected: transfer={transfer}, primaries={primaries}")
+    return codec, is_hdr
 
 
 def _probe_keyframe_times(video_path):
@@ -1558,7 +1599,8 @@ class _ThreadedDecoder:
     queue so decode of frame N+1 overlaps GPU compute of frame N.
     """
 
-    def __init__(self, input_path, frame_start, frame_end, w, h, fps):
+    def __init__(self, input_path, frame_start, frame_end, w, h, fps,
+                 is_hdr=False):
         self._queue = queue.Queue(maxsize=2)
         self._frame_size = w * h * 3
         self._shape = (h, w, 3)
@@ -1569,6 +1611,10 @@ class _ThreadedDecoder:
             "-ss", str(t_start),
             "-i", input_path,
             "-frames:v", str(n_frames),
+        ]
+        if is_hdr:
+            cmd += ["-vf", _HDR_TONEMAP_VF]
+        cmd += [
             "-f", "rawvideo",
             "-pix_fmt", "rgb24",
             "pipe:1",
@@ -1607,7 +1653,7 @@ def _render_active_segment_fallback(
     face_data, face_data_stable, p_curve, zooms,
     blur_strength, blur_n_samples, whip_strength, whip_direction,
     times, overlay, overlay_config, face_side, dest_x_full,
-    stabilize, debug_labels, fps, w, h, enc,
+    stabilize, debug_labels, fps, w, h, enc, is_hdr=False,
 ):
     """Fallback GPU render using cv2.VideoCapture + ffmpeg pipe."""
     seg_p = p_curve[frame_start:frame_end + 1]
@@ -1626,7 +1672,7 @@ def _render_active_segment_fallback(
         _render_hold_ffmpeg(
             input_path, output_path, frame_start, frame_end,
             face_data_stable, hold_z, face_side, dest_x_full,
-            fps, w, h, enc,
+            fps, w, h, enc, is_hdr=is_hdr,
         )
         return
 
@@ -1661,7 +1707,8 @@ def _render_active_segment_fallback(
 
     buf_nv12_cpu = np.empty((h + h // 2, w), dtype=np.uint8)
 
-    decoder = _ThreadedDecoder(input_path, frame_start, frame_end, w, h, fps)
+    decoder = _ThreadedDecoder(input_path, frame_start, frame_end, w, h, fps,
+                               is_hdr=is_hdr)
     writer = open_ffmpeg_writer(output_path, w, h, fps, enc, pix_fmt="nv12")
 
     damp_fx = damp_fy = None
@@ -1784,7 +1831,7 @@ def _render_active_segment_gpu(
     face_data, face_data_stable, p_curve, zooms,
     blur_strength, blur_n_samples, whip_strength, whip_direction,
     times, overlay, overlay_config, face_side, dest_x_full,
-    stabilize, debug_labels, fps, w, h, enc,
+    stabilize, debug_labels, fps, w, h, enc, is_hdr=False,
 ):
     """GPU render: cv2 decode + GPU effects + ffmpeg h264_nvenc encode."""
     _render_active_segment_fallback(
@@ -1792,7 +1839,7 @@ def _render_active_segment_gpu(
         face_data, face_data_stable, p_curve, zooms,
         blur_strength, blur_n_samples, whip_strength, whip_direction,
         times, overlay, overlay_config, face_side, dest_x_full,
-        stabilize, debug_labels, fps, w, h, enc,
+        stabilize, debug_labels, fps, w, h, enc, is_hdr=is_hdr,
     )
 
 
@@ -1801,7 +1848,7 @@ def _run_segment_pipeline_gpu(
     face_data, face_data_stable, p_curve, zooms,
     blur_strength, blur_n_samples, whip_strength, whip_direction,
     times, overlay, overlay_config, face_side, dest_x_full,
-    stabilize, debug_labels, w, h, enc, src_codec="h264",
+    stabilize, debug_labels, w, h, enc, src_codec="h264", is_hdr=False,
 ):
     """GPU version of _run_segment_pipeline."""
     tmp_dir = tempfile.mkdtemp(prefix="zb_seg_")
@@ -1947,7 +1994,7 @@ def _run_segment_pipeline_gpu(
         def _extract(args):
             path, fs, fe = args
             _extract_passthrough(input_path, path, fs / fps, (fe + 1) / fps, enc,
-                                 reencode=need_reencode)
+                                 reencode=need_reencode, is_hdr=is_hdr)
         with ThreadPoolExecutor(max_workers=min(len(pass_segs), 4)) as pool_ex:
             list(pool_ex.map(_extract, pass_segs))
         mode = "re-encoded" if need_reencode else "stream-copied"
@@ -1965,7 +2012,7 @@ def _run_segment_pipeline_gpu(
             face_data, face_data_stable, p_curve, zooms,
             blur_strength, blur_n_samples, whip_strength, whip_direction,
             times, overlay, overlay_config, face_side, dest_x_full,
-            stabilize, debug_labels, fps, w, h, enc,
+            stabilize, debug_labels, fps, w, h, enc, is_hdr=is_hdr,
         )
 
     elapsed_render = time.monotonic() - t1
@@ -2065,7 +2112,7 @@ def create_zoom_bounce_effect(
         print("   No render ranges — nothing to do")
         return
 
-    src_codec = _probe_source_codec(input_path)
+    src_codec, is_hdr = _probe_source(input_path)
 
     overlay = None
     if overlay_config:
@@ -2115,4 +2162,5 @@ def create_zoom_bounce_effect(
         blur_strength, blur_n_samples, whip_strength, whip_direction,
         times, overlay, overlay_config, face_side, dest_x_full,
         stabilize, debug_labels, w, h, enc, src_codec=src_codec,
+        is_hdr=is_hdr,
     )

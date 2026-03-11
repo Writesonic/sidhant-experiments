@@ -4,7 +4,11 @@ from modal_config import GPU_PROD, LOCAL_SRC_DIR, REMOTE_SRC_DIR, TIMEOUT_PROD, 
 
 app = modal.App("zoom-bounce")
 
-image = base_image.add_local_dir(LOCAL_SRC_DIR, remote_path=REMOTE_SRC_DIR)
+image = (
+    base_image
+    .add_local_dir(LOCAL_SRC_DIR, remote_path=REMOTE_SRC_DIR)
+    .add_local_file(LOCAL_SRC_DIR + "/modal_config.py", remote_path="/root/modal_config.py")
+)
 
 
 @app.function(
