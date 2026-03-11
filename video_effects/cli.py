@@ -9,7 +9,6 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 import uuid
 
 from temporalio.client import Client
@@ -19,6 +18,8 @@ from video_effects.config import settings
 from video_effects.schemas.styles import STYLE_PRESETS
 from video_effects.schemas.workflow import VideoEffectsInput
 
+
+NUMBER_OF_APPROVAL_ATTEMPTS = 5
 
 async def get_client() -> Client:
     return await Client.connect(
@@ -189,27 +190,13 @@ async def run_workflow(args) -> None:
 
     if not args.auto_approve:
         approved = False
-        for attempt in range(5):
+        for attempt in range(NUMBER_OF_APPROVAL_ATTEMPTS):
             # Poll for timeline to be ready
             msg = "Waiting for effect analysis..." if attempt == 0 else "Waiting for re-analysis..."
             print(f"\n{msg}")
-            prev_timeline = timeline if attempt > 0 else None
-            timeline = None
-            for _ in range(120):  # 2 minutes max
-                await asyncio.sleep(1)
-                try:
-                    timeline = await handle.query("get_timeline")
-                    # On retries, wait for a NEW timeline (different from previous)
-                    if timeline is not None and timeline != prev_timeline:
-                        break
-                except Exception:
-                    pass
+            prev_timeline = await handle.query("get_timeline")
+            _print_timeline(prev_timeline)
 
-            if timeline is None or timeline == prev_timeline:
-                print("Error: Timed out waiting for timeline")
-                return
-
-            _print_timeline(timeline)
 
             # Interactive approval
             while True:
@@ -225,7 +212,7 @@ async def run_workflow(args) -> None:
                     print(f"Rejected with feedback. Retrying... (attempt {attempt + 2}/5)")
                     break
                 elif choice == "json":
-                    print(json.dumps(timeline, indent=2))
+                    print(json.dumps(prev_timeline, indent=2))
                 else:
                     print("Please enter y, n, or json")
 
