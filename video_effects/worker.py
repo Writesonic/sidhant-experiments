@@ -41,7 +41,7 @@ async def main():
             activity_executor=executor,
         )
 
-        print(f"Starting Video Effects worker...")
+        print("Starting Video Effects worker...")
         print(f"  Task Queue: {settings.TASK_QUEUE}")
         print(f"  Namespace: {settings.TEMPORAL_NAMESPACE}")
         print(f"  Endpoint: {settings.TEMPORAL_ENDPOINT}")

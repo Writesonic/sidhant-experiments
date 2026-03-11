@@ -275,10 +275,10 @@ class VideoEffectsWorkflow:
 
         # ── Component generation (parallel with video render) ──
         # ProgrammerWorkflow takes priority over InfographicGeneratorWorkflow
-        infographic_task = None
+        code_generation_task = None
         wid = workflow.info().workflow_id
         if enable_programmer and spatial_context:
-            infographic_task = workflow.execute_child_workflow(
+            code_generation_task = workflow.execute_child_workflow(
                 "ProgrammerWorkflow",
                 {
                     "spatial_context": spatial_context,
@@ -292,7 +292,7 @@ class VideoEffectsWorkflow:
                 id=f"{wid}/programmer-gen",
             )
         elif enable_infographics and spatial_context:
-            infographic_task = workflow.execute_child_workflow(
+            code_generation_task = workflow.execute_child_workflow(
                 "InfographicGeneratorWorkflow",
                 {
                     "spatial_context": spatial_context,
@@ -329,16 +329,9 @@ class VideoEffectsWorkflow:
             heartbeat_timeout=timedelta(minutes=2),
         )
 
-        # Wait for render + infographic gen in parallel
-        parallel_tasks = [render_task]
-        if infographic_task is not None:
-            parallel_tasks.append(infographic_task)
-
-        results = await asyncio.gather(*parallel_tasks)
-        apply_result = results[0]
+        apply_result, code_generation_result = await asyncio.gather(render_task, code_generation_task)
 
         mg_plan = None
-        infographic_result = results[1] if infographic_task is not None else None
 
         # ── G7: Final composition + audio mux ──
         compose_result = await workflow.execute_activity(
@@ -360,9 +353,9 @@ class VideoEffectsWorkflow:
         word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
 
         # ── Merge infographic components into MG plan ──
-        if infographic_result is not None:
-            gen_comps = infographic_result.get("generated_components", [])
-            fb_comps = infographic_result.get("fallback_components", [])
+        if code_generation_result is not None:
+            gen_comps = code_generation_result.get("generated_components", [])
+            fb_comps = code_generation_result.get("fallback_components", [])
             extra_components = gen_comps + fb_comps
 
             if extra_components:
