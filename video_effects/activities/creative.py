@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-#TODO: This can be 2 haiku calls instead of 1 sonnet calls. To be honest I don't even know if we need this because we always get styles anyway. Maybe for future use.
 @activity.defn(name="vfx_design_style")
 def design_style(input_data: dict) -> dict:
     """Pick and customize a style preset based on transcript + video metadata.

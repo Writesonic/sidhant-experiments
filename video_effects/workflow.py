@@ -108,7 +108,7 @@ class VideoEffectsWorkflow:
         rejection_feedback = ""
         for attempt in range(MAX_RETRIES):
             # G3: LLM parse effect cues
-            parse_input = {
+            parse_input = { # TODO: Come one man why isn't this a pydantic model its 2026 ffs?
                 "transcript": transcript_result["transcript"],
                 "segments": transcript_result["segments"],
                 "duration": video_info["duration"],
@@ -156,7 +156,7 @@ class VideoEffectsWorkflow:
                 )
 
             if self._approval_decision:
-                break  # Approved
+                break
 
             # Rejected — loop back to G3 with feedback
             rejection_feedback = self._rejection_feedback or "User rejected the timeline. Try different effect choices."
@@ -172,9 +172,9 @@ class VideoEffectsWorkflow:
         effects = timeline.get("effects", [])
 
         # Filter out subtitle effects — Remotion handles text overlays
-        effects = [e for e in effects if e.get("effect_type") != "subtitle"]
+        effects = [e for e in effects if e.get("effect_type") != "subtitle"] # TODO: Just remove from upstream instead of here.
 
-        # Inject synthetic zoom cues for jump cut smoothing
+        # TODO: Remove jump cuts  
         if input.smooth_jump_cuts and jump_cut_result:
             jump_cuts = jump_cut_result.get("jump_cuts", [])
             for jc in jump_cuts:
@@ -221,7 +221,7 @@ class VideoEffectsWorkflow:
             )
 
         # --mg and --infographics both route through the code-gen pipeline
-        enable_infographics = getattr(input, "enable_infographics", False) or input.enable_motion_graphics
+        enable_infographics = getattr(input, "enable_infographics", False) or input.enable_motion_graphics # TODO: Honestly I might just get rid of infographics and just use programmer.
         enable_programmer = getattr(input, "enable_programmer", False)
         has_transcript = bool(transcript_result.get("segments"))
         if not effects and not enable_infographics and not enable_programmer and not has_transcript:
@@ -276,8 +276,8 @@ class VideoEffectsWorkflow:
         # ── Component generation (parallel with video render) ──
         # ProgrammerWorkflow takes priority over InfographicGeneratorWorkflow
         infographic_task = None
+        wid = workflow.info().workflow_id
         if enable_programmer and spatial_context:
-            wf_prefix = workflow.info().workflow_id.split("-")[-1][:6]
             infographic_task = workflow.execute_child_workflow(
                 "ProgrammerWorkflow",
                 {
@@ -287,12 +287,11 @@ class VideoEffectsWorkflow:
                     "style_config": style_config,
                     "video_fps": int(video_info.get("fps", 30)),
                     "video_info": video_info,
-                    "workflow_prefix": wf_prefix,
+                    "workflow_prefix": wid,
                 },
-                id=f"{workflow.info().workflow_id}/programmer-gen",
+                id=f"{wid}/programmer-gen",
             )
         elif enable_infographics and spatial_context:
-            wf_prefix = workflow.info().workflow_id.split("-")[-1][:6]
             infographic_task = workflow.execute_child_workflow(
                 "InfographicGeneratorWorkflow",
                 {
@@ -302,17 +301,17 @@ class VideoEffectsWorkflow:
                     "style_config": style_config,
                     "video_fps": int(video_info.get("fps", 30)),
                     "video_info": video_info,
-                    "workflow_prefix": wf_prefix,
+                    "workflow_prefix": wid,
                 },
-                id=f"{workflow.info().workflow_id}/infographic-gen",
+                id=f"{wid}/infographic-gen",
             )
 
         # ── G6b: Setup processors (face tracking, etc.) ──
-        await workflow.execute_activity(
+        await workflow.execute_activity( 
             "vfx_setup_processors",
             {
                 "video_path": video_path, "effects": effects,
-                "video_info": video_info, "cache_dir": temp_dir,
+                "video_info": video_info, "cache_dir": temp_dir, # TODO: there's probably a better way to do this. temp dir thing. This doesn't feel right. 
             },
             start_to_close_timeout=activity_timeout,
             heartbeat_timeout=timedelta(minutes=5),
