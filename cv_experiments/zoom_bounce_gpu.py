@@ -37,10 +37,21 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 
 EDGE_STRIP_FRAC = 0.04
 FADE_WIDTH_FRAC = 0.25
+VIEWPORT_EDGE_MARGIN = 4  # px — keep viewport away from source frame edges
 
 
 def lerp(a, b, t):
     return a + (b - a) * t
+
+
+def _clamp_viewport_shift(sx, sy, z, w, h, margin=VIEWPORT_EDGE_MARGIN):
+    """Clamp viewport shift so source coords stay within [margin, dim-1-margin]."""
+    m = margin * min(1.0, max(0.0, (z - 1.0) * 20))  # ramp 0→full over z=1.0..1.05
+    sx_lo = (1.0 - z) * (w - 1) + z * m
+    sx_hi = -z * m
+    sy_lo = (1.0 - z) * (h - 1) + z * m
+    sy_hi = -z * m
+    return max(sx_lo, min(sx_hi, sx)), max(sy_lo, min(sy_hi, sy))
 
 
 # ─── Bounce easing functions ────────────────────────────────────────────────
@@ -475,8 +486,8 @@ def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
         fy_st = float(face_data_stable[abs_idx][1])
         cx = fx_st - dest_x_full / z
         cy = fy_st - (h / 2) / z
-        cx = max(0, min(cx, w - crop_w))
-        cy = max(0, min(cy, h - crop_h))
+        cx = max(VIEWPORT_EDGE_MARGIN, min(cx, w - crop_w - VIEWPORT_EDGE_MARGIN))
+        cy = max(VIEWPORT_EDGE_MARGIN, min(cy, h - crop_h - VIEWPORT_EDGE_MARGIN))
         cx_arr.append(cx)
         cy_arr.append(cy)
 
@@ -490,8 +501,8 @@ def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
     if drift < 0.02 * w:
         avg_cx = int(sum(cx_arr) / n)
         avg_cy = int(sum(cy_arr) / n)
-        avg_cx = max(0, min(avg_cx, w - crop_w))
-        avg_cy = max(0, min(avg_cy, h - crop_h))
+        avg_cx = max(VIEWPORT_EDGE_MARGIN, min(avg_cx, w - crop_w - VIEWPORT_EDGE_MARGIN))
+        avg_cy = max(VIEWPORT_EDGE_MARGIN, min(avg_cy, h - crop_h - VIEWPORT_EDGE_MARGIN))
         vf = f"crop={crop_w}:{crop_h}:{avg_cx}:{avg_cy},scale={w}:{h}:flags=bilinear"
     else:
         key_interval_frames = int(KEY_INTERVAL * fps)
@@ -510,8 +521,8 @@ def _render_hold_ffmpeg(input_path, output_path, frame_start, frame_end,
         kf_t = [i / fps for i in keyframe_indices]
 
         for i in range(len(kf_cx)):
-            kf_cx[i] = max(0, min(kf_cx[i], w - crop_w))
-            kf_cy[i] = max(0, min(kf_cy[i], h - crop_h))
+            kf_cx[i] = max(VIEWPORT_EDGE_MARGIN, min(kf_cx[i], w - crop_w - VIEWPORT_EDGE_MARGIN))
+            kf_cy[i] = max(VIEWPORT_EDGE_MARGIN, min(kf_cy[i], h - crop_h - VIEWPORT_EDGE_MARGIN))
 
         def _build_lerp_expr(kf_vals, kf_times):
             if len(kf_vals) == 1:
@@ -1352,6 +1363,7 @@ def _gpu_zoom_blur(pool, g_rgb, w, h, z, sx, sy, strength, n_samples):
         sz = z + dz
         s_sx = sx + cx * (z - sz)
         s_sy = sy + cy * (z - sz)
+        s_sx, s_sy = _clamp_viewport_shift(s_sx, s_sy, sz, w, h)
         _gpu_warp(g_rgb, pool.blur_sample, w, h, sz, s_sx, s_sy)
         cp.copyto(pool.blur_sample_f32, pool.blur_sample, casting='unsafe')
         cp.add(pool.blur_accum, pool.blur_sample_f32, out=pool.blur_accum)
@@ -1569,8 +1581,7 @@ def _render_active_segment_nvcodec(
         dx = lerp(w / 2, dest_x_full, p)
         sx_val = dx - tx * z
         sy_val = h / 2 - ty * z
-        sx_val = max((1.0 - z) * (w - 1), min(0.0, sx_val))
-        sy_val = max((1.0 - z) * (h - 1), min(0.0, sy_val))
+        sx_val, sy_val = _clamp_viewport_shift(sx_val, sy_val, z, w, h)
 
         sfx = fx * z + sx_val
         sfy = fy * z + sy_val
@@ -1818,8 +1829,7 @@ def _render_active_segment_fallback(
         dx = lerp(w / 2, dest_x_full, p)
         sx_val = dx - tx * z
         sy_val = h / 2 - ty * z
-        sx_val = max((1.0 - z) * (w - 1), min(0.0, sx_val))
-        sy_val = max((1.0 - z) * (h - 1), min(0.0, sy_val))
+        sx_val, sy_val = _clamp_viewport_shift(sx_val, sy_val, z, w, h)
 
         sfx = fx * z + sx_val
         sfy = fy * z + sy_val
