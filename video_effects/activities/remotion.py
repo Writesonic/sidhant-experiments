@@ -10,7 +10,7 @@ from temporalio import activity
 
 from video_effects.helpers.face_tracking import detect_faces, smooth_data, _probe_decoded_size
 from video_effects.helpers.llm import call_structured
-from video_effects.helpers.remotion import composite_overlay, render_media, render_still
+from video_effects.helpers.remotion import composite_overlay, composite_with_mask, render_media, render_still
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
 from video_effects.schemas.mg_templates import (
     MGTemplateSpec,
@@ -1260,3 +1260,139 @@ def preview_motion_graphics(input_data: dict) -> dict:
         snapshots.append({"frame": frame_num, "path": output_path})
 
     return {"snapshots": snapshots}
+
+
+@activity.defn(name="vfx_render_with_background")
+def render_with_background(input_data: dict) -> dict:
+    """Render video with background replacement: animated background + masked person + components.
+
+    Split pipeline:
+      A) Remotion renders background-only (fast canvas animation, no video decoding)
+      B) FFmpeg alphamerge composites person onto background (native C, fast)
+      C) If MG components exist, render transparent overlay + composite
+
+    Input: {
+        "composition_plan": dict,   # CompositionPlan with components
+        "original_video": str,      # effects-applied video (staticFile source)
+        "mask_video": str,          # SAM mask video (staticFile source)
+        "background_type": str,     # BackgroundRegistry key
+        "background_config": dict,  # background-specific props
+        "output_dir": str,
+        "video_width": int,
+        "video_height": int,
+        "video_fps": int,
+        "total_frames": int,
+    }
+    Output: {
+        "output_path": str,
+        "components_rendered": int,
+    }
+    """
+    import shutil
+
+    plan = input_data["composition_plan"]
+    original_video = input_data["original_video"]
+    mask_video = input_data["mask_video"]
+    background_type = input_data["background_type"]
+    background_config = input_data.get("background_config", {})
+    output_dir = input_data["output_dir"]
+    width = input_data["video_width"]
+    height = input_data["video_height"]
+    fps = input_data["video_fps"]
+    total_frames = input_data["total_frames"]
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "bg_composite.mp4")
+    num_components = len(plan.get("components", []))
+
+    # ── Phase A: Render background-only via Remotion ──
+    activity.heartbeat("Rendering background animation")
+    bg_only_path = os.path.join(output_dir, "bg_only.mp4")
+
+    bg_plan = {
+        **plan,
+        "components": [],  # no MG components in this pass
+        "includeBaseVideo": False,
+        "backgroundMode": {
+            "originalSrc": "",  # empty → BackgroundCompositor skips MaskedVideo
+            "maskSrc": "",
+            "backgroundType": background_type,
+            "backgroundConfig": background_config,
+        },
+        "durationInFrames": total_frames,
+        "fps": fps,
+        "width": width,
+        "height": height,
+    }
+
+    render_media(
+        composition_id="MotionOverlay",
+        props=bg_plan,
+        output_path=bg_only_path,
+        width=width,
+        height=height,
+        fps=fps,
+        duration_in_frames=total_frames,
+        codec="h264",
+    )
+
+    # ── Phase B: FFmpeg mask composite (person onto background) ──
+    activity.heartbeat("Compositing person onto background via FFmpeg")
+    composited_path = os.path.join(output_dir, "bg_person.mp4")
+
+    composite_with_mask(
+        background_video=bg_only_path,
+        original_video=original_video,
+        mask_video=mask_video,
+        output_path=composited_path,
+    )
+
+    # ── Phase C: MG overlay (only if components exist) ──
+    if num_components > 0:
+        activity.heartbeat(f"Rendering {num_components} MG components overlay")
+        overlay_path = os.path.join(output_dir, "mg_overlay.mov")
+
+        mg_plan = {
+            **plan,
+            "includeBaseVideo": False,
+            "durationInFrames": total_frames,
+            "fps": fps,
+            "width": width,
+            "height": height,
+        }
+        # Remove backgroundMode — MG overlay is transparent, no background
+        mg_plan.pop("backgroundMode", None)
+
+        render_media(
+            composition_id="MotionOverlay",
+            props=mg_plan,
+            output_path=overlay_path,
+            width=width,
+            height=height,
+            fps=fps,
+            duration_in_frames=total_frames,
+            codec="prores",
+        )
+
+        activity.heartbeat("Compositing MG overlay")
+        composite_overlay(
+            base_video=composited_path,
+            overlay_video=overlay_path,
+            output_path=output_path,
+            copy_audio=False,
+        )
+
+        # Clean up intermediate files
+        for f in [bg_only_path, composited_path, overlay_path]:
+            if os.path.exists(f):
+                os.remove(f)
+    else:
+        # No MG components — composited result is final
+        shutil.move(composited_path, output_path)
+        if os.path.exists(bg_only_path):
+            os.remove(bg_only_path)
+
+    return {
+        "output_path": output_path,
+        "components_rendered": num_components,
+    }

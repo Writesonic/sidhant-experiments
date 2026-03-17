@@ -12,6 +12,7 @@ import { ZoomDataProvider } from "./lib/zoom-context";
 import { loadStyleFont } from "./lib/fonts";
 import { StyleProvider } from "./lib/styles";
 import { ComponentRegistry } from "./components";
+import { BackgroundCompositor } from "./compositions/BackgroundCompositor";
 import type { CompositionPlan, FaceFrame, StyleConfig, ZoomFrame } from "./types";
 
 export const DynamicComposition: React.FC<CompositionPlan> = ({
@@ -22,6 +23,7 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
   faceDataPath,
   zoomStatePath,
   styleConfig,
+  backgroundMode,
 }) => {
   const [faceData, setFaceData] = useState<FaceFrame[]>([]);
   const [zoomData, setZoomData] = useState<Map<number, ZoomFrame>>(new Map());
@@ -107,8 +109,17 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
       <FaceDataProvider faceData={faceData}>
         <ZoomDataProvider zoomData={zoomData}>
           <AbsoluteFill style={{ backgroundColor: "transparent" }}>
-            {includeBaseVideo && baseVideoPath && (
-              <OffthreadVideo src={baseVideoPath} />
+            {backgroundMode ? (
+              <BackgroundCompositor
+                originalSrc={backgroundMode.originalSrc ? staticFile(backgroundMode.originalSrc) : ""}
+                maskSrc={backgroundMode.maskSrc ? staticFile(backgroundMode.maskSrc) : ""}
+                backgroundType={backgroundMode.backgroundType}
+                backgroundConfig={backgroundMode.backgroundConfig}
+              />
+            ) : (
+              includeBaseVideo && baseVideoPath && (
+                <OffthreadVideo src={baseVideoPath} />
+              )
             )}
             {sorted.map((comp, i) => {
               const Component = ComponentRegistry[comp.template];

@@ -13,6 +13,7 @@ from .remotion import (
     render_motion_overlay,
     composite_motion_graphics,
     preview_motion_graphics,
+    render_with_background,
 )
 from .infographic import (
     cleanup_generated,
@@ -31,6 +32,7 @@ from .programmer import (
     programmer_critique,
     programmer_generate_code,
 )
+from .segmentation import segment_person, download_s3
 
 ALL_VIDEO_EFFECTS_ACTIVITIES = [
     get_video_info,
@@ -64,4 +66,7 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     programmer_brainstorm,
     programmer_critique,
     programmer_generate_code,
+    render_with_background,
+    segment_person,
+    download_s3,
 ]

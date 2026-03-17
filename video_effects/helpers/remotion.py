@@ -74,11 +74,16 @@ def render_media(
         "npx", "remotion", "render",
         composition_id, output_path,
         "--codec", codec,
-        "--prores-profile", prores_profile,
-        "--image-format", "png",
-        "--pixel-format", "yuva444p10le",
         "--props", props_json,
     ]
+
+    if codec == "prores":
+        cmd.extend(["--prores-profile", prores_profile])
+        cmd.extend(["--image-format", "png"])
+        cmd.extend(["--pixel-format", "yuva444p10le"])
+    elif codec == "h264":
+        cmd.extend(["--crf", "16"])
+        cmd.extend(["--image-format", "jpeg"])
 
     if width and height:
         cmd.extend(["--width", str(width), "--height", str(height)])
@@ -153,4 +158,54 @@ def composite_overlay(
         )
 
     logger.info("Composite done: %s", output_path)
+    return output_path
+
+
+def composite_with_mask(
+    background_video: str,
+    original_video: str,
+    mask_video: str,
+    output_path: str,
+) -> str:
+    """Composite person (from original, masked by SAM mask) onto a background video via FFmpeg.
+
+    Uses alphamerge to apply the mask as alpha on the original video,
+    then overlays the transparent person layer on the background.
+    """
+    filter_complex = (
+        "[1:v][2:v]alphamerge[person];"
+        "[0:v][person]overlay=0:0:shortest=1"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", background_video,
+        "-i", original_video,
+        "-i", mask_video,
+        "-filter_complex", filter_complex,
+        "-c:v", "libx264",
+        "-crf", "16",
+        "-an",
+        output_path,
+    ]
+
+    logger.info(
+        "Mask composite: bg=%s + original=%s + mask=%s -> %s",
+        background_video, original_video, mask_video, output_path,
+    )
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+    if result.returncode != 0:
+        stderr_lines = result.stderr.strip().split("\n")
+        err_tail = "\n".join(stderr_lines[-20:])
+        raise RuntimeError(
+            f"FFmpeg mask composite failed (exit {result.returncode}):\n{err_tail}"
+        )
+
+    logger.info("Mask composite done: %s", output_path)
     return output_path

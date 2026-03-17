@@ -12,6 +12,8 @@ class VideoEffectsInput(BaseModel):
     dev_mode: bool = Field(False, description="Dev mode: effects triggered by explicit verbal commands")
     enable_infographics: bool = Field(False, description="Enable LLM-generated infographic overlays")
     enable_programmer: bool = Field(False, description="Enable free-hand creative programmer workflow")
+    background_type: str = Field("", description="Background type: aurora, particles, meshGradient, gridPattern")
+    background_config: dict = Field(default_factory=dict, description="Background-specific props")
 
 
 class VideoEffectsOutput(BaseModel):
