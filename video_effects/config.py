@@ -44,5 +44,15 @@ class VideoEffectsSettings(BaseSettings):
     PROGRAMMER_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per component
     PROGRAMMER_LLM_MODEL: str = "claude-opus-4-6"  # Opus for creative code gen
 
+    # SAM segmentation
+    SAM_ENDPOINT_URL: str = ""  # Modal /segment_to_s3 endpoint URL
+    S3_BUCKET: str = "ai-video-actions-755620792222-us-east-1"
+    WEBHOOK_URL: str = ""  # Webhook receiver URL (POST /webhook/gpu-complete)
+
+    # AWS (for S3 upload/download)
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+
 
 settings = VideoEffectsSettings()

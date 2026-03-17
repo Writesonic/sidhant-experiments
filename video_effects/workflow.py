@@ -306,6 +306,19 @@ class VideoEffectsWorkflow:
         base_output = compose_result["output_video"]
         mg_applied = 0
 
+        # ── Start SAM segmentation AFTER G7 (needs effects-applied video) ──
+        sam_task = None
+        if input.background_type:
+            sam_task = workflow.execute_activity(
+                "vfx_segment_person",
+                {
+                    "video_path": base_output,
+                    "cache_dir": temp_dir,
+                },
+                start_to_close_timeout=timedelta(minutes=30),
+                heartbeat_timeout=timedelta(minutes=10),
+            )
+
         # Pre-compute word segments (needed for subtitle obstacle + subtitle injection)
         subtitle_segments = transcript_result.get("segments", [])
         word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
@@ -430,9 +443,69 @@ class VideoEffectsWorkflow:
                 len(subtitle_words), first_frame, last_frame,
             )
 
+        # ── Await SAM segmentation (if requested) ──
+        sam_result = None
+        mask_local = None
+        if sam_task:
+            sam_result = await sam_task
+            # Download mask from S3
+            mask_download = await workflow.execute_activity(
+                "vfx_download_s3",
+                {
+                    "s3_key": sam_result["output_path"].replace("s3://", ""),
+                    "local_path": f"{temp_dir}/mask_video.mp4",
+                },
+                start_to_close_timeout=activity_timeout,
+            )
+            mask_local = mask_download["local_path"]
+
         #TODO: Soon there will be an approval step here. Basically it will be the "export" step after showing a preview of the motion graphics.
-        # ── G8e + G9: Render overlay + composite (needs base video + approved plan) ──
-        if mg_plan is not None and mg_plan.get("components"):
+        # ── Render path: background mode vs standard overlay ──
+        if mask_local and input.background_type:
+            # Background mode: Remotion renders background + masked person + components (H.264)
+            width = video_info.get("width", 1920)
+            height = video_info.get("height", 1080)
+            fps = int(video_info.get("fps", 30))
+            total_frames = video_info.get("total_frames", 0) or int(video_info.get("duration", 10) * fps)
+
+            bg_result = await workflow.execute_activity(
+                "vfx_render_with_background",
+                {
+                    "composition_plan": mg_plan or {
+                        "components": [],
+                        "colorPalette": [],
+                        "includeBaseVideo": False,
+                    },
+                    "original_video": base_output,
+                    "mask_video": mask_local,
+                    "background_type": input.background_type,
+                    "background_config": input.background_config,
+                    "output_dir": f"{temp_dir}/bg_render",
+                    "video_width": width,
+                    "video_height": height,
+                    "video_fps": fps,
+                    "total_frames": total_frames,
+                },
+                start_to_close_timeout=long_timeout,
+                heartbeat_timeout=timedelta(minutes=15),
+            )
+
+            bg_video = bg_result["output_path"]
+            mg_applied = bg_result.get("components_rendered", 0)
+
+            # Mux audio from the base video onto the background composite
+            await workflow.execute_activity(
+                "vfx_compose_final",
+                {
+                    "processed_video": bg_video,
+                    "audio_path": original_audio_path,
+                    "output_path": output_path,
+                    "has_audio": video_info.get("has_audio", True),
+                },
+                start_to_close_timeout=activity_timeout,
+            )
+        elif mg_plan is not None and mg_plan.get("components"):
+            # Standard path: transparent ProRes overlay + ffmpeg composite
             mg_applied = await self._render_and_composite_mg(
                 mg_plan=mg_plan,
                 base_video=base_output,
@@ -485,7 +558,7 @@ class VideoEffectsWorkflow:
                 "total_frames": total_frames,
             },
             start_to_close_timeout=long_timeout,
-            heartbeat_timeout=timedelta(minutes=5),
+            heartbeat_timeout=timedelta(minutes=15),
         )
 
         overlay_path = overlay_result.get("overlay_path", "")

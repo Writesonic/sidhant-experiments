@@ -161,6 +161,8 @@ async def run_workflow(args) -> None:
     enable_programmer = getattr(args, "programmer", False)
     enable_mg = args.motion_graphics or enable_infographics or enable_programmer
 
+    bg_config = json.loads(args.bg_config) if args.bg_config else {}
+
     input_data = VideoEffectsInput(
         input_video=os.path.abspath(args.input),
         output_video=os.path.abspath(args.output),
@@ -170,6 +172,8 @@ async def run_workflow(args) -> None:
         dev_mode=args.dev,
         enable_infographics=enable_infographics,
         enable_programmer=enable_programmer,
+        background_type=args.background,
+        background_config=bg_config,
     )
 
     print(f"Starting Video Effects workflow: {workflow_id}")
@@ -289,6 +293,17 @@ def main():
         "--programmer",
         action="store_true",
         help="Enable free-hand creative programmer workflow (replaces --infographics)",
+    )
+    run_parser.add_argument(
+        "--background", "--bg",
+        default="",
+        choices=["", "aurora", "particles", "meshGradient", "gridPattern"],
+        help="Background replacement type (requires SAM segmentation)",
+    )
+    run_parser.add_argument(
+        "--bg-config",
+        default="{}",
+        help="JSON string of background-specific props",
     )
 
     args = parser.parse_args()

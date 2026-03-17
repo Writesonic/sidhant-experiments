@@ -48,6 +48,13 @@ export interface ZoomFrame {
   ty: number;       // target Y normalized (0-1)
 }
 
+export interface BackgroundMode {
+  originalSrc: string;      // effects-applied video (staticFile path)
+  maskSrc: string;          // SAM mask video (staticFile path)
+  backgroundType: string;   // BackgroundRegistry key
+  backgroundConfig?: Record<string, any>;
+}
+
 export interface CompositionPlan {
   components: ComponentSpec[];
   colorPalette: string[];
@@ -56,6 +63,7 @@ export interface CompositionPlan {
   faceDataPath?: string;
   zoomStatePath?: string;
   styleConfig?: StyleConfig;
+  backgroundMode?: BackgroundMode;
   /** Passed from Python to size the composition dynamically. */
   durationInFrames?: number;
   fps?: number;
