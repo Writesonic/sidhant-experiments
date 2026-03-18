@@ -19,6 +19,7 @@ from video_effects.schemas.mg_templates import (
     load_guidance,
 )
 from video_effects.schemas.motion_graphics import (
+    EditMgPlanResponse,
     Z_TIER_FULLSCREEN,
     Z_TIER_INFOGRAPHIC,
 )
@@ -1229,6 +1230,7 @@ def preview_motion_graphics(input_data: dict) -> dict:
         "preview_frames": list[int],   # frame numbers to capture
         "output_dir": str,
         "base_video_path": str | None, # if set, include base video in preview
+        "video_info": dict | None,     # video metadata for composition sizing
     }
     Output: {
         "snapshots": list[{"frame": int, "path": str}],
@@ -1238,13 +1240,25 @@ def preview_motion_graphics(input_data: dict) -> dict:
     frames = input_data["preview_frames"]
     output_dir = input_data["output_dir"]
     base_video = input_data.get("base_video_path")
+    video_info = input_data.get("video_info", {})
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # For previews, include base video so user sees full composite
-    preview_plan = {**plan, "includeBaseVideo": bool(base_video)}
-    if base_video:
-        preview_plan["baseVideoPath"] = base_video
+    # Previews render overlay only (base video not accessible to Remotion's dev server)
+    preview_plan = {**plan, "includeBaseVideo": False}
+
+    # Set composition metadata so Remotion sizes the composition correctly
+    if video_info:
+        fps = int(video_info.get("fps", 30))
+        total_frames = video_info.get("total_frames", 0) or int(video_info.get("duration", 10) * fps)
+        preview_plan.setdefault("durationInFrames", total_frames)
+        preview_plan.setdefault("fps", fps)
+        preview_plan.setdefault("width", video_info.get("width", 1920))
+        preview_plan.setdefault("height", video_info.get("height", 1080))
+
+    # Clamp frames to composition duration
+    max_frame = preview_plan.get("durationInFrames", 300) - 1
+    frames = [f for f in frames if 0 <= f <= max_frame]
 
     snapshots = []
     for i, frame_num in enumerate(frames):
@@ -1260,3 +1274,35 @@ def preview_motion_graphics(input_data: dict) -> dict:
         snapshots.append({"frame": frame_num, "path": output_path})
 
     return {"snapshots": snapshots}
+
+
+@activity.defn(name="vfx_edit_mg_plan")
+def edit_mg_plan(input_data: dict) -> dict:
+    """Edit MG plan based on user feedback (lightweight, no codegen).
+
+    Input: {
+        "components": list[dict],  # current component list
+        "feedback": str,           # user rejection feedback
+    }
+    Output: {
+        "components": list[dict],  # modified component list
+        "reasoning": str,
+    }
+    """
+    components = input_data["components"]
+    feedback = input_data["feedback"]
+
+    system_prompt = (_PROMPT_DIR / "edit_mg_plan.md").read_text()
+    user_message = (
+        f"## Current Components\n\n```json\n{json.dumps(components, indent=2)}\n```\n\n"
+        f"## User Feedback\n\n{feedback}"
+    )
+
+    result = call_structured(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        response_model=EditMgPlanResponse,
+    )
+
+    logger.info("MG plan edited: %s", result.get("reasoning", ""))
+    return result

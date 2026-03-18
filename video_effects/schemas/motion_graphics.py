@@ -60,3 +60,9 @@ class MotionGraphicsPreview(BaseModel):
     timestamp: float
     snapshot_path: str
     components_visible: list[str] = Field(default_factory=list)
+
+
+class EditMgPlanResponse(BaseModel):
+    """LLM response for editing an MG plan based on user feedback."""
+    components: list[dict] = Field(description="Modified component list with adjustments applied")
+    reasoning: str = Field(description="What was changed and why")

@@ -14,4 +14,8 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "mediapipe>=0.10.32",
     "numpy>=1.26.0",
+    "chainlit>=2.0.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["video_effects*"]

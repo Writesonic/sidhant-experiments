@@ -6,6 +6,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from video_effects.schemas.styles import get_style
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
+    from video_effects.web_helpers import compute_preview_frames
 
 MAX_RETRIES = 5
 
@@ -19,6 +20,11 @@ class VideoEffectsWorkflow:
         self._approval_decision: bool | None = None  # None = pending, True = approved, False = rejected
         self._rejection_feedback: str = ""
         self._timeline_data: dict | None = None
+        self._mg_approval_decision: bool | None = None
+        self._mg_rejection_feedback: str = ""
+        self._mg_plan_data: dict | None = None
+        self._mg_preview_data: dict | None = None
+        self._workflow_stage: str = "init"
 
     @workflow.signal
     async def approve_timeline(self, args: list) -> None:
@@ -34,6 +40,27 @@ class VideoEffectsWorkflow:
         """Query to get the current timeline for CLI display."""
         return self._timeline_data
 
+    @workflow.signal
+    async def approve_mg(self, args: list) -> None:
+        """Signal to approve or reject the MG plan.
+
+        Args is [approved: bool, feedback: str].
+        """
+        self._mg_approval_decision = args[0]
+        self._mg_rejection_feedback = args[1] if len(args) > 1 else ""
+
+    @workflow.query
+    def get_mg_plan(self) -> dict | None:
+        return self._mg_plan_data
+
+    @workflow.query
+    def get_mg_preview(self) -> dict | None:
+        return self._mg_preview_data
+
+    @workflow.query
+    def get_workflow_stage(self) -> str:
+        return self._workflow_stage
+
     @workflow.run
     async def run(self, input: VideoEffectsInput) -> VideoEffectsOutput:
         video_path = input.input_video
@@ -42,6 +69,8 @@ class VideoEffectsWorkflow:
 
         activity_timeout = timedelta(minutes=10)
         long_timeout = timedelta(minutes=30)
+
+        self._workflow_stage = "analyzing"
 
         # ── G1: Extract video info + audio (parallel) ──
         # TODO: Move this to a smaller function outside
@@ -124,6 +153,7 @@ class VideoEffectsWorkflow:
             if input.auto_approve:
                 break
 
+            self._workflow_stage = "timeline_approval"
             # Reset decision and wait for signal
             self._approval_decision = None
             self._rejection_feedback = ""
@@ -134,6 +164,7 @@ class VideoEffectsWorkflow:
                     timeout=timedelta(minutes=10),
                 )
             except asyncio.TimeoutError:
+                self._workflow_stage = "error"
                 return VideoEffectsOutput(
                     output_video="",
                     error="Timeline approval timed out after 10 minutes",
@@ -148,11 +179,13 @@ class VideoEffectsWorkflow:
                 f"Timeline rejected (attempt {attempt + 1}/{MAX_RETRIES}): {rejection_feedback}"
             )
         else:
+            self._workflow_stage = "error"
             return VideoEffectsOutput(
                 output_video="",
                 error=f"Timeline rejected {MAX_RETRIES} times, giving up",
             )
 
+        self._workflow_stage = "processing"
         effects = timeline.get("effects", [])
 
         # Inject color grading from style if applicable
@@ -430,8 +463,96 @@ class VideoEffectsWorkflow:
                 len(subtitle_words), first_frame, last_frame,
             )
 
-        #TODO: Soon there will be an approval step here. Basically it will be the "export" step after showing a preview of the motion graphics.
+        # ── MG Approval Gate ──
+        if mg_plan is not None and mg_plan.get("components") and not input.auto_approve:
+            # Only gate if there are non-subtitle components worth reviewing
+            has_reviewable = any(c.get("template") != "subtitles" for c in mg_plan["components"])
+            if has_reviewable:
+                self._mg_plan_data = mg_plan
+
+                # Render preview stills
+                self._workflow_stage = "mg_preview"
+                preview_frames = compute_preview_frames(mg_plan, video_info)
+                preview_result = await workflow.execute_activity(
+                    "vfx_preview_motion_graphics",
+                    {
+                        "composition_plan": mg_plan,
+                        "preview_frames": preview_frames,
+                        "output_dir": f"{temp_dir}/remotion/preview",
+                        "base_video_path": base_output,
+                        "video_info": video_info,
+                    },
+                    start_to_close_timeout=activity_timeout,
+                    heartbeat_timeout=timedelta(minutes=5),
+                )
+                self._mg_preview_data = preview_result
+
+                # Wait for approval signal
+                self._workflow_stage = "mg_approval"
+                for mg_attempt in range(MAX_RETRIES):
+                    self._mg_approval_decision = None
+                    self._mg_rejection_feedback = ""
+
+                    try:
+                        await workflow.wait_condition(
+                            lambda: self._mg_approval_decision is not None,
+                            timeout=timedelta(minutes=10),
+                        )
+                    except asyncio.TimeoutError:
+                        self._workflow_stage = "error"
+                        return VideoEffectsOutput(
+                            output_video="",
+                            error="MG approval timed out after 10 minutes",
+                        )
+
+                    if self._mg_approval_decision:
+                        mg_plan = self._mg_plan_data
+                        break
+
+                    # Rejected — edit plan and re-preview
+                    feedback = self._mg_rejection_feedback or "User rejected the plan. Make adjustments."
+                    workflow.logger.info(
+                        "MG plan rejected (attempt %d/%d): %s",
+                        mg_attempt + 1, MAX_RETRIES, feedback,
+                    )
+
+                    edited = await workflow.execute_activity(
+                        "vfx_edit_mg_plan",
+                        {
+                            "components": mg_plan["components"],
+                            "feedback": feedback,
+                        },
+                        start_to_close_timeout=activity_timeout,
+                    )
+                    mg_plan["components"] = edited["components"]
+                    self._mg_plan_data = mg_plan
+
+                    # Re-render previews with edited plan
+                    self._workflow_stage = "mg_preview"
+                    preview_frames = compute_preview_frames(mg_plan, video_info)
+                    preview_result = await workflow.execute_activity(
+                        "vfx_preview_motion_graphics",
+                        {
+                            "composition_plan": mg_plan,
+                            "preview_frames": preview_frames,
+                            "output_dir": f"{temp_dir}/remotion/preview",
+                            "base_video_path": base_output,
+                            "video_info": video_info,
+                        },
+                        start_to_close_timeout=activity_timeout,
+                        heartbeat_timeout=timedelta(minutes=5),
+                    )
+                    self._mg_preview_data = preview_result
+                    self._workflow_stage = "mg_approval"
+                else:
+                    self._workflow_stage = "error"
+                    return VideoEffectsOutput(
+                        output_video="",
+                        error=f"MG plan rejected {MAX_RETRIES} times, giving up",
+                    )
+
         # ── G8e + G9: Render overlay + composite (needs base video + approved plan) ──
+        self._workflow_stage = "rendering"
         if mg_plan is not None and mg_plan.get("components"):
             mg_applied = await self._render_and_composite_mg(
                 mg_plan=mg_plan,
@@ -443,6 +564,7 @@ class VideoEffectsWorkflow:
                 long_timeout=long_timeout,
             )
 
+        self._workflow_stage = "done"
         return VideoEffectsOutput(
             output_video=base_output,
             effects_applied=len(effects),

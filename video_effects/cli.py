@@ -221,6 +221,61 @@ async def run_workflow(args) -> None:
                 print(f"  Error: {error}")
             return
 
+    # ── MG Approval (poll stage, only triggers if workflow reaches mg_approval) ──
+    if not args.auto_approve:
+        print("\nWaiting for workflow to reach MG approval (or finish)...")
+        while True:
+            await asyncio.sleep(2)
+            stage = await handle.query("get_workflow_stage")
+            if stage in ("mg_approval", "done", "error", "rendering"):
+                break
+
+        if stage == "mg_approval":
+            mg_approved = False
+            for mg_attempt in range(NUMBER_OF_APPROVAL_ATTEMPTS):
+                mg_plan = await handle.query("get_mg_plan")
+                mg_preview = await handle.query("get_mg_preview")
+
+                _print_mg_plan(mg_plan)
+
+                if mg_preview and mg_preview.get("snapshots"):
+                    print("\n  Preview snapshots:")
+                    for snap in mg_preview["snapshots"]:
+                        print(f"    Frame {snap['frame']}: {snap['path']}")
+
+                while True:
+                    choice = input("\nApprove MG? [y/n/json]: ").strip().lower()
+                    if choice in ("y", "yes"):
+                        await handle.signal("approve_mg", [True, ""])
+                        print("MG plan approved. Rendering...")
+                        mg_approved = True
+                        break
+                    elif choice in ("n", "no"):
+                        feedback = input("Feedback (what to change): ").strip()
+                        await handle.signal("approve_mg", [False, feedback])
+                        print(f"Rejected with feedback. Retrying... (attempt {mg_attempt + 2}/{NUMBER_OF_APPROVAL_ATTEMPTS})")
+                        # Wait for re-preview
+                        while True:
+                            await asyncio.sleep(2)
+                            stage = await handle.query("get_workflow_stage")
+                            if stage in ("mg_approval", "done", "error"):
+                                break
+                        break
+                    elif choice == "json":
+                        print(json.dumps(mg_plan, indent=2))
+                    else:
+                        print("Please enter y, n, or json")
+
+                if mg_approved or stage in ("done", "error"):
+                    break
+            else:
+                print(f"Max MG retries ({NUMBER_OF_APPROVAL_ATTEMPTS}) reached.")
+                result = await handle.result()
+                error = result.get("error") if isinstance(result, dict) else result.error
+                if error:
+                    print(f"  Error: {error}")
+                return
+
     # Wait for completion
     print("\nWaiting for workflow completion...")
     result = await handle.result()
