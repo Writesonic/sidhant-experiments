@@ -17,10 +17,10 @@ export function FeedbackDialog({ title, onSubmit, onCancel }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-fade-in">
       <form
         onSubmit={handleSubmit}
-        className="bg-neutral-900 border border-neutral-700 rounded-lg p-6 w-full max-w-md space-y-4"
+        className="bg-neutral-900 border border-neutral-700 rounded-xl p-6 w-full max-w-md space-y-4 animate-slide-up"
       >
         <h3 className="text-lg font-semibold">{title}</h3>
         <textarea

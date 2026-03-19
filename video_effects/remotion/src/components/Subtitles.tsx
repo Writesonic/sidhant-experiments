@@ -1,7 +1,6 @@
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import type { SubtitlesProps, SubtitleWord } from "../types";
-import { useFaceAwareLayout } from "../lib/spatial";
 import { useStyle } from "../lib/styles";
 
 interface Page {
@@ -86,17 +85,21 @@ export const Subtitles: React.FC<SubtitlesProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
-  const { left, top, scale, maxWidth } = useFaceAwareLayout(position, anchor);
   const style_ = useStyle();
-  const scaledFontSize = fontSize * scale;
+
+  // Subtitles are screen-anchored — use static bounds directly.
+  // No zoom compensation (base video already has zoom baked in) and
+  // no face-based scaling (subtitles should stay fixed size at screen bottom).
+  const left = position.x * width;
+  const top = position.y * height;
+  const maxWidth = position.w * width;
+  const scaledFontSize = fontSize;
 
   const resolvedHighlight =
     highlightColor ?? style_.palette?.[2] ?? "#FFD700";
 
-  // Available width for text (account for padding)
   const containerPadding = scaledFontSize * 0.4 * 2;
-  const availableTextWidth =
-    Math.min(maxWidth, width * 0.85) - containerPadding;
+  const availableTextWidth = Math.min(maxWidth, width * 0.85) - containerPadding;
 
   const pages = useMemo(
     () => buildDynamicPages(words, availableTextWidth, scaledFontSize, 2),

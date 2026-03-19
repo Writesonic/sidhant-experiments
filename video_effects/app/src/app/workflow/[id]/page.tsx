@@ -1,18 +1,12 @@
 "use client";
 
 import { use } from "react";
+import Link from "next/link";
 import { useWorkflow } from "@/hooks/useWorkflow";
 import { TimelineApproval } from "@/components/TimelineApproval";
 import { MgApproval } from "@/components/MgApproval";
-
-function Spinner({ text }: { text: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 py-24">
-      <div className="w-8 h-8 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
-      <p className="text-neutral-400 text-sm">{text}</p>
-    </div>
-  );
-}
+import { fileUrl } from "@/lib/api";
+import { StageIndicator, ActivityIndicator, Stat, Card } from "@/components/ui";
 
 export default function WorkflowPage({
   params,
@@ -22,92 +16,164 @@ export default function WorkflowPage({
   const { id } = use(params);
   const { data, error } = useWorkflow(id);
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="py-16 text-center">
-        <p className="text-red-400">Failed to load workflow: {error}</p>
-      </div>
+      <Card className="border-red-500/30 p-6">
+        <p className="text-red-400 text-sm">Failed to connect: {error}</p>
+        <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 mt-4 inline-block">
+          Try Again
+        </Link>
+      </Card>
     );
   }
 
   if (!data) {
-    return <Spinner text="Connecting to workflow..." />;
+    return <ActivityIndicator stage="Connecting" description="Reaching workflow server..." />;
   }
 
   const { stage } = data;
 
   if (stage === "init" || stage === "analyzing") {
-    return <Spinner text="Analyzing video..." />;
+    return (
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up">
+          <ActivityIndicator stage="Analyzing" description="Extracting video metadata, transcribing audio..." />
+        </div>
+      </>
+    );
   }
 
   if (stage === "timeline_approval" && data.timeline) {
     return (
-      <TimelineApproval
-        workflowId={id}
-        timeline={data.timeline}
-        baseVideoPath={data.video_paths?.base_video}
-      />
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up">
+          <TimelineApproval
+            workflowId={id}
+            timeline={data.timeline}
+            baseVideoPath={data.video_paths?.base_video}
+          />
+        </div>
+      </>
     );
   }
 
-  if (stage === "processing") {
-    return <Spinner text="Processing effects and generating components..." />;
-  }
-
-  if (stage === "mg_preview") {
-    return <Spinner text="Preparing motion graphics preview..." />;
+  if (stage === "processing" || stage === "mg_preview") {
+    const desc = stage === "processing"
+      ? "Applying effects and generating motion graphics..."
+      : "Building motion graphics composition...";
+    const label = stage === "processing" ? "Processing" : "Preparing preview";
+    return (
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up space-y-6">
+          {data.video_paths?.base_video && (
+            <Card className="p-0 overflow-hidden relative">
+              <video
+                src={fileUrl(data.video_paths.base_video)}
+                controls
+                muted
+                className="w-full max-h-[400px] bg-black"
+              />
+            </Card>
+          )}
+          <ActivityIndicator stage={label} description={desc} />
+        </div>
+      </>
+    );
   }
 
   if (stage === "mg_approval" && data.mg_plan && data.video_info && data.video_paths) {
     return (
-      <MgApproval
-        workflowId={id}
-        mgPlan={data.mg_plan}
-        videoInfo={data.video_info}
-        videoPaths={data.video_paths}
-      />
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up">
+          <MgApproval
+            workflowId={id}
+            mgPlan={data.mg_plan}
+            videoInfo={data.video_info}
+            videoPaths={data.video_paths}
+          />
+        </div>
+      </>
     );
   }
 
   if (stage === "rendering") {
-    return <Spinner text="Rendering final video..." />;
+    return (
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up space-y-6">
+          {data.video_paths?.base_video && (
+            <Card className="p-0 overflow-hidden">
+              <video
+                src={fileUrl(data.video_paths.base_video)}
+                controls
+                muted
+                className="w-full max-h-[400px] bg-black"
+              />
+            </Card>
+          )}
+          <ActivityIndicator stage="Rendering" description="Encoding final video with all overlays..." />
+        </div>
+      </>
+    );
   }
 
   if (stage === "done" && data.result) {
     const r = data.result;
     return (
-      <div className="max-w-lg mx-auto py-16 space-y-4">
-        <h2 className="text-2xl font-bold text-green-400">Done</h2>
-        <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-2 text-sm">
-          <p>
-            <span className="text-neutral-400">Output:</span>{" "}
-            <code className="text-neutral-200">{String(r.output_video)}</code>
-          </p>
-          <p>
-            <span className="text-neutral-400">Effects:</span>{" "}
-            {String(r.effects_applied)}
-          </p>
-          {Number(r.motion_graphics_applied) > 0 && (
-            <p>
-              <span className="text-neutral-400">Motion graphics:</span>{" "}
-              {String(r.motion_graphics_applied)} components
-            </p>
-          )}
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <Stat value={String(r.effects_applied)} label="Effects applied" />
+            <Stat value={String(r.motion_graphics_applied)} label="Motion graphics" />
+            {r.transcript_length != null && (
+              <Stat value={String(r.transcript_length)} label="Transcript length" />
+            )}
+            {r.phases != null && (
+              <Stat value={String(r.phases)} label="Phases" />
+            )}
+          </div>
+          <Card>
+            <p className="text-xs text-neutral-500 mb-2">Output path</p>
+            <code className="text-sm text-neutral-200 break-all">{String(r.output_video)}</code>
+          </Card>
+          <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 inline-block">
+            Start New
+          </Link>
         </div>
-      </div>
+      </>
     );
   }
 
   if (stage === "error") {
     return (
-      <div className="max-w-lg mx-auto py-16 space-y-4">
-        <h2 className="text-2xl font-bold text-red-400">Error</h2>
-        <p className="text-neutral-300 text-sm">
-          {data.error ?? "Unknown error"}
-        </p>
-      </div>
+      <>
+        <StageIndicator currentStage={stage} />
+        <div className="animate-slide-up">
+          <Card className="border-red-500/30 p-6">
+            <pre className="overflow-x-auto"><code className="text-sm text-red-300">{data.error ?? "Unknown error"}</code></pre>
+            <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 mt-4 inline-block">
+              Try Again
+            </Link>
+          </Card>
+        </div>
+      </>
     );
   }
 
-  return <Spinner text={`Stage: ${stage}...`} />;
+  return (
+    <>
+      <StageIndicator currentStage={stage} />
+      <div className="animate-slide-up">
+        <ActivityIndicator
+          stage={stage.charAt(0).toUpperCase() + stage.slice(1)}
+          description="Processing..."
+        />
+      </div>
+    </>
+  );
 }

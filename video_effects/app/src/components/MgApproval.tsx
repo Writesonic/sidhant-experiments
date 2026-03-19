@@ -2,15 +2,33 @@
 
 import { useState } from "react";
 import { signalWorkflow, fileUrl } from "@/lib/api";
-import type { CompositionPlan, ComponentSpec } from "@remotion-project/types";
+import type { CompositionPlan, ComponentSpec, NormalizedRect } from "@remotion-project/types";
 import { VideoPlayer } from "./VideoPlayer";
 import { FeedbackDialog } from "./FeedbackDialog";
+import { Badge, Card, ActionBar } from "@/components/ui";
+
+const TEMPLATE_BORDERS: Record<string, string> = {
+  animated_title: "border-l-blue-500",
+  lower_third: "border-l-amber-500",
+  listicle: "border-l-emerald-500",
+  data_animation: "border-l-purple-500",
+  generated: "border-l-cyan-500",
+};
+
+const TEMPLATE_FILLS: Record<string, string> = {
+  animated_title: "bg-blue-500/60",
+  lower_third: "bg-amber-500/60",
+  listicle: "bg-emerald-500/60",
+  data_animation: "bg-purple-500/60",
+  generated: "bg-cyan-500/60",
+};
 
 interface ComponentCard {
   index: number;
   template: string;
   timeRange: string;
   propsSummary: string;
+  bounds: NormalizedRect;
 }
 
 function buildCards(components: ComponentSpec[], fps: number): ComponentCard[] {
@@ -20,13 +38,21 @@ function buildCards(components: ComponentSpec[], fps: number): ComponentCard[] {
       const startS = c.startFrame / fps;
       const endS = (c.startFrame + c.durationInFrames) / fps;
       const props = c.props ?? {};
-      let summary = (props.text as string) ?? (props.name as string) ?? "";
-      if (summary.length > 30) summary = summary.slice(0, 27) + "...";
+
+      let summary = "";
+      if (props.text) {
+        const txt = String(props.text);
+        summary = txt.length > 30 ? `"${txt.slice(0, 27)}..."` : `"${txt}"`;
+      } else if (props.name) {
+        summary = `name: ${String(props.name)}`;
+      }
+
       return {
         index: i,
         template: c.template,
-        timeRange: `${startS.toFixed(1)}s-${endS.toFixed(1)}s`,
+        timeRange: `${startS.toFixed(1)}s – ${endS.toFixed(1)}s`,
         propsSummary: summary,
+        bounds: c.bounds,
       };
     })
     .filter((c): c is ComponentCard => c !== null);
@@ -88,11 +114,17 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
     ]);
   }
 
+  const borderClass = (template: string) =>
+    TEMPLATE_BORDERS[template] ?? "border-l-neutral-600";
+
+  const fillClass = (template: string) =>
+    TEMPLATE_FILLS[template] ?? "bg-neutral-500/60";
+
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Motion Graphics Preview</h2>
 
-      <div className="rounded-lg overflow-hidden bg-black">
+      <Card className="p-0 overflow-hidden rounded-xl">
         <VideoPlayer
           plan={plan}
           width={width}
@@ -100,66 +132,97 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
           fps={fps}
           durationInFrames={totalFrames}
         />
-      </div>
+      </Card>
+
+      {plan.colorPalette.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Palette</span>
+          <div className="flex gap-1">
+            {plan.colorPalette.map((color, i) => (
+              <div
+                key={i}
+                className="w-5 h-5 rounded-full border border-neutral-700"
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         <h3 className="text-lg font-semibold">
           Components ({cards.length})
         </h3>
         {cards.map((card) => (
-          <div
+          <Card
             key={card.index}
-            className="flex items-center justify-between bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3"
+            className={`relative border-l-2 ${borderClass(card.template)} px-4 py-3`}
           >
-            <div className="space-y-0.5">
-              <div className="font-mono text-sm">{card.template}</div>
-              <div className="text-xs text-neutral-400">
-                {card.timeRange}
-                {card.propsSummary && ` — ${card.propsSummary}`}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Badge label={card.template} type={card.template} />
+                  <span className="text-sm font-mono text-neutral-300">
+                    {card.timeRange}
+                  </span>
+                </div>
+                {card.propsSummary && (
+                  <div className="text-xs text-neutral-400">{card.propsSummary}</div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                {card.bounds && (
+                  <div
+                    className="relative bg-neutral-800 rounded"
+                    style={{ width: 60, height: 34 }}
+                  >
+                    <div
+                      className={`absolute rounded-sm ${fillClass(card.template)}`}
+                      style={{
+                        left: `${card.bounds.x * 100}%`,
+                        top: `${card.bounds.y * 100}%`,
+                        width: `${card.bounds.w * 100}%`,
+                        height: `${card.bounds.h * 100}%`,
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() =>
+                      setFeedbackTarget({
+                        type: "component",
+                        index: card.index,
+                        template: card.template,
+                      })
+                    }
+                    disabled={sending}
+                    className="px-3 py-1 text-xs border border-neutral-700 text-neutral-400 hover:bg-neutral-800 rounded transition-colors disabled:opacity-40"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleRemove(card.index)}
+                    disabled={sending}
+                    className="px-3 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() =>
-                  setFeedbackTarget({
-                    type: "component",
-                    index: card.index,
-                    template: card.template,
-                  })
-                }
-                disabled={sending}
-                className="px-3 py-1 text-xs bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-800 rounded transition-colors"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => handleRemove(card.index)}
-                disabled={sending}
-                className="px-3 py-1 text-xs bg-red-900/50 hover:bg-red-800/50 disabled:bg-neutral-800 text-red-300 rounded transition-colors"
-              >
-                Remove
-              </button>
-            </div>
-          </div>
+          </Card>
         ))}
       </div>
 
-      <div className="flex gap-3">
-        <button
-          onClick={handleApprove}
-          disabled={sending}
-          className="px-6 py-2 bg-green-600 hover:bg-green-500 disabled:bg-neutral-700 rounded text-sm font-medium transition-colors"
-        >
-          Approve All
-        </button>
-        <button
-          onClick={() => setFeedbackTarget({ type: "all" })}
-          disabled={sending}
-          className="px-6 py-2 bg-red-600 hover:bg-red-500 disabled:bg-neutral-700 rounded text-sm font-medium transition-colors"
-        >
-          Reject All
-        </button>
-      </div>
+      <ActionBar
+        onApprove={handleApprove}
+        onReject={() => setFeedbackTarget({ type: "all" })}
+        approveLabel="Approve All"
+        rejectLabel="Request Changes"
+        disabled={sending}
+      />
 
       {feedbackTarget && (
         <FeedbackDialog

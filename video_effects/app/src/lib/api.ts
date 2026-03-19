@@ -18,21 +18,33 @@ export async function startWorkflow(params: {
   return res.json();
 }
 
+export type EffectType = "zoom" | "blur" | "color_change" | "whip" | "speed_ramp" | "vignette";
+
+export type WorkflowStage =
+  | "init" | "analyzing" | "timeline_approval" | "processing"
+  | "mg_preview" | "mg_approval" | "rendering" | "done" | "error";
+
 export interface TimelineEffect {
-  effect_type: string;
+  effect_type: EffectType;
   start_time: number;
   end_time: number;
   confidence: number;
   verbal_cue: string;
+  zoom_params?: { tracking: string; zoom_level: number; easing: string; action: string };
+  whip_params?: { direction: string; intensity: number };
+  speed_ramp_params?: { speed: number; easing: string };
+  color_params?: { preset: string; intensity: number };
+  blur_params?: { blur_type: string; radius: number };
+  vignette_params?: { strength: number; radius: number };
 }
 
 export interface WorkflowStatus {
-  stage: string;
-  timeline?: { effects: TimelineEffect[]; conflicts_resolved: number };
+  stage: WorkflowStage;
+  timeline?: { effects: TimelineEffect[]; conflicts_resolved: number; total_duration?: number };
   mg_plan?: Record<string, unknown>;
-  video_info?: Record<string, number>;
+  video_info?: { fps: number; width: number; height: number; duration: number; total_frames: number };
   video_paths?: { base_video: string; face_data: string; zoom_state: string };
-  result?: Record<string, unknown>;
+  result?: { output_video: string; effects_applied: number; motion_graphics_applied: number; transcript_length?: number; phases?: number };
   error?: string;
 }
 

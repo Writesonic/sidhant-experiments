@@ -13,7 +13,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-neutral-950 text-neutral-100 min-h-screen">
+      <body className="bg-neutral-950 text-neutral-100 min-h-screen antialiased">
+        <header className="max-w-6xl mx-auto px-4 pt-6 pb-2">
+          <span className="text-sm font-medium text-neutral-500">VFX Studio</span>
+        </header>
         <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
       </body>
     </html>
