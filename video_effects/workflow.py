@@ -6,7 +6,6 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from video_effects.schemas.styles import get_style
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
-    from video_effects.web_helpers import compute_preview_frames
 
 MAX_RETRIES = 5
 
@@ -25,6 +24,8 @@ class VideoEffectsWorkflow:
         self._mg_plan_data: dict | None = None
         self._mg_preview_data: dict | None = None
         self._workflow_stage: str = "init"
+        self._video_paths: dict = {}
+        self._video_info: dict = {}
 
     @workflow.signal
     async def approve_timeline(self, args: list) -> None:
@@ -61,6 +62,14 @@ class VideoEffectsWorkflow:
     def get_workflow_stage(self) -> str:
         return self._workflow_stage
 
+    @workflow.query
+    def get_video_paths(self) -> dict:
+        return self._video_paths
+
+    @workflow.query
+    def get_video_info(self) -> dict:
+        return self._video_info
+
     @workflow.run
     async def run(self, input: VideoEffectsInput) -> VideoEffectsOutput:
         video_path = input.input_video
@@ -88,6 +97,7 @@ class VideoEffectsWorkflow:
         video_info, audio_result = await asyncio.gather(
             video_info_task, extract_audio_task
         )
+        self._video_info = video_info
         audio_path = audio_result.get("audio_path")
         original_audio_path = audio_result.get("original_audio_path")
 
@@ -464,92 +474,68 @@ class VideoEffectsWorkflow:
             )
 
         # ── MG Approval Gate ──
-        if mg_plan is not None and mg_plan.get("components") and not input.auto_approve:
+        face_data_path = spatial_context.get("face_data_path", "") if spatial_context else ""
+        zoom_state_path = spatial_context.get("zoom_state_path", "") if spatial_context else ""
+        self._video_paths = {
+            "base_video": base_output,
+            "face_data": face_data_path,
+            "zoom_state": zoom_state_path,
+        }
+
+        if mg_plan is not None and mg_plan.get("components"):
             # Only gate if there are non-subtitle components worth reviewing
             has_reviewable = any(c.get("template") != "subtitles" for c in mg_plan["components"])
             if has_reviewable:
                 self._mg_plan_data = mg_plan
 
-                # Render preview stills
-                self._workflow_stage = "mg_preview"
-                preview_frames = compute_preview_frames(mg_plan, video_info)
-                preview_result = await workflow.execute_activity(
-                    "vfx_preview_motion_graphics",
-                    {
-                        "composition_plan": mg_plan,
-                        "preview_frames": preview_frames,
-                        "output_dir": f"{temp_dir}/remotion/preview",
-                        "base_video_path": base_output,
-                        "video_info": video_info,
-                    },
-                    start_to_close_timeout=activity_timeout,
-                    heartbeat_timeout=timedelta(minutes=5),
-                )
-                self._mg_preview_data = preview_result
+                # No CLI preview rendering — the Next.js app uses @remotion/player
+                # to preview directly in the browser via the get_video_paths query.
 
-                # Wait for approval signal
-                self._workflow_stage = "mg_approval"
-                for mg_attempt in range(MAX_RETRIES):
-                    self._mg_approval_decision = None
-                    self._mg_rejection_feedback = ""
+                if not input.auto_approve:
+                    self._workflow_stage = "mg_approval"
+                    for mg_attempt in range(MAX_RETRIES):
+                        self._mg_approval_decision = None
+                        self._mg_rejection_feedback = ""
 
-                    try:
-                        await workflow.wait_condition(
-                            lambda: self._mg_approval_decision is not None,
-                            timeout=timedelta(minutes=10),
+                        try:
+                            await workflow.wait_condition(
+                                lambda: self._mg_approval_decision is not None,
+                                timeout=timedelta(minutes=10),
+                            )
+                        except asyncio.TimeoutError:
+                            self._workflow_stage = "error"
+                            return VideoEffectsOutput(
+                                output_video="",
+                                error="MG approval timed out after 10 minutes",
+                            )
+
+                        if self._mg_approval_decision:
+                            mg_plan = self._mg_plan_data
+                            break
+
+                        # Rejected — edit plan (browser re-renders via Player)
+                        feedback = self._mg_rejection_feedback or "User rejected the plan. Make adjustments."
+                        workflow.logger.info(
+                            "MG plan rejected (attempt %d/%d): %s",
+                            mg_attempt + 1, MAX_RETRIES, feedback,
                         )
-                    except asyncio.TimeoutError:
+
+                        edited = await workflow.execute_activity(
+                            "vfx_edit_mg_plan",
+                            {
+                                "components": mg_plan["components"],
+                                "feedback": feedback,
+                            },
+                            start_to_close_timeout=activity_timeout,
+                        )
+                        mg_plan["components"] = edited["components"]
+                        self._mg_plan_data = mg_plan
+                    else:
                         self._workflow_stage = "error"
                         return VideoEffectsOutput(
                             output_video="",
-                            error="MG approval timed out after 10 minutes",
+                            error=f"MG plan rejected {MAX_RETRIES} times, giving up",
                         )
-
-                    if self._mg_approval_decision:
-                        mg_plan = self._mg_plan_data
-                        break
-
-                    # Rejected — edit plan and re-preview
-                    feedback = self._mg_rejection_feedback or "User rejected the plan. Make adjustments."
-                    workflow.logger.info(
-                        "MG plan rejected (attempt %d/%d): %s",
-                        mg_attempt + 1, MAX_RETRIES, feedback,
-                    )
-
-                    edited = await workflow.execute_activity(
-                        "vfx_edit_mg_plan",
-                        {
-                            "components": mg_plan["components"],
-                            "feedback": feedback,
-                        },
-                        start_to_close_timeout=activity_timeout,
-                    )
-                    mg_plan["components"] = edited["components"]
-                    self._mg_plan_data = mg_plan
-
-                    # Re-render previews with edited plan
-                    self._workflow_stage = "mg_preview"
-                    preview_frames = compute_preview_frames(mg_plan, video_info)
-                    preview_result = await workflow.execute_activity(
-                        "vfx_preview_motion_graphics",
-                        {
-                            "composition_plan": mg_plan,
-                            "preview_frames": preview_frames,
-                            "output_dir": f"{temp_dir}/remotion/preview",
-                            "base_video_path": base_output,
-                            "video_info": video_info,
-                        },
-                        start_to_close_timeout=activity_timeout,
-                        heartbeat_timeout=timedelta(minutes=5),
-                    )
-                    self._mg_preview_data = preview_result
-                    self._workflow_stage = "mg_approval"
-                else:
-                    self._workflow_stage = "error"
-                    return VideoEffectsOutput(
-                        output_video="",
-                        error=f"MG plan rejected {MAX_RETRIES} times, giving up",
-                    )
 
         # ── G8e + G9: Render overlay + composite (needs base video + approved plan) ──
         self._workflow_stage = "rendering"

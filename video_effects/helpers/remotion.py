@@ -74,11 +74,15 @@ def render_media(
         "npx", "remotion", "render",
         composition_id, output_path,
         "--codec", codec,
-        "--prores-profile", prores_profile,
-        "--image-format", "png",
-        "--pixel-format", "yuva444p10le",
         "--props", props_json,
     ]
+
+    if codec == "prores":
+        cmd.extend([
+            "--prores-profile", prores_profile,
+            "--image-format", "png",
+            "--pixel-format", "yuva444p10le",
+        ])
 
     if width and height:
         cmd.extend(["--width", str(width), "--height", str(height)])

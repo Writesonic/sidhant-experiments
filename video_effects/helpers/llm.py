@@ -2,6 +2,8 @@
 
 import json
 import logging
+import random
+import time
 from pathlib import Path
 
 import anthropic
@@ -9,6 +11,30 @@ import anthropic
 from video_effects.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Retryable: overloaded (529), rate limit (429), server errors (503, 504), timeouts
+RETRYABLE_STATUS_CODES = {429, 503, 504, 529}
+MAX_LLM_RETRIES = 5
+INITIAL_RETRY_DELAY = 2.0
+MAX_RETRY_DELAY = 120.0
+
+
+def _is_retryable(error: BaseException) -> bool:
+    """True if the error is transient and worth retrying."""
+    if isinstance(error, anthropic.APITimeoutError):
+        return True
+    if isinstance(error, anthropic.APIStatusError):
+        return error.status_code in RETRYABLE_STATUS_CODES
+    return False
+
+
+def _sleep_with_jitter(attempt: int) -> None:
+    """Exponential backoff with jitter to avoid thundering herd."""
+    delay = min(INITIAL_RETRY_DELAY * (2**attempt), MAX_RETRY_DELAY)
+    jitter = delay * 0.2 * (2 * random.random() - 1)
+    sleep_time = max(0.1, delay + jitter)
+    logger.warning("LLM transient error, retrying in %.1fs (attempt %d)", sleep_time, attempt + 1)
+    time.sleep(sleep_time)
 
 _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
@@ -33,6 +59,8 @@ def call_structured(
 ) -> dict:
     """Call Claude with structured output via tool use.
 
+    Retries on transient errors (529 overloaded, 429 rate limit, 503/504, timeouts).
+
     Args:
         system_prompt: System prompt text.
         user_message: User message content.
@@ -55,21 +83,37 @@ def call_structured(
         "input_schema": schema,
     }
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-        tools=[tool],
-        tool_choice={"type": "tool", "name": tool_name},
-    )
+    last_error: BaseException | None = None
+    for attempt in range(MAX_LLM_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+                tools=[tool],
+                tool_choice={"type": "tool", "name": tool_name},
+            )
+            for block in response.content:
+                if block.type == "tool_use":
+                    return block.input
+            raise ValueError("LLM did not return structured output via tool use")
+        except ValueError:
+            raise
+        except Exception as e:
+            last_error = e
+            if _is_retryable(e) and attempt < MAX_LLM_RETRIES - 1:
+                status = getattr(e, "status_code", None)
+                logger.warning(
+                    "LLM call failed (status=%s): %s",
+                    status,
+                    getattr(e, "message", str(e)),
+                )
+                _sleep_with_jitter(attempt)
+            else:
+                raise
 
-    # Extract tool use result
-    for block in response.content:
-        if block.type == "tool_use":
-            return block.input
-
-    raise ValueError("LLM did not return structured output via tool use")
+    raise last_error or ValueError("LLM did not return structured output via tool use")
 
 
 def call_text(
@@ -80,27 +124,35 @@ def call_text(
 ) -> str:
     """Call Claude and return raw text response (for code generation).
 
-    Args:
-        system_prompt: System prompt text.
-        user_message: User message content.
-        model: Model ID override. Defaults to settings.LLM_MODEL.
-        max_tokens: Max tokens in response.
-
-    Returns:
-        Raw text string from the model.
+    Retries on transient errors (529 overloaded, 429 rate limit, 503/504, timeouts).
     """
     client = get_client()
     model = model or settings.LLM_MODEL
+    last_error: BaseException | None = None
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
+    for attempt in range(MAX_LLM_RETRIES):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            for block in response.content:
+                if block.type == "text":
+                    return block.text
+            raise ValueError("LLM did not return text output")
+        except Exception as e:
+            last_error = e
+            if _is_retryable(e) and attempt < MAX_LLM_RETRIES - 1:
+                status = getattr(e, "status_code", None)
+                logger.warning(
+                    "LLM call failed (status=%s): %s",
+                    status,
+                    getattr(e, "message", str(e)),
+                )
+                _sleep_with_jitter(attempt)
+            else:
+                raise
 
-    for block in response.content:
-        if block.type == "text":
-            return block.text
-
-    raise ValueError("LLM did not return text output")
+    raise last_error or ValueError("LLM did not return text output")

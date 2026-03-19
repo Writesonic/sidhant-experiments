@@ -8,13 +8,15 @@ Automated video post-production powered by LLM analysis, OpenCV frame processing
 # 1. Start the Temporal worker
 python -m video_effects.worker
 
-# 2. Run the pipeline on a video
-python -m video_effects.cli run input.mp4 --output output.mp4
+# 2. Start the API server
+uvicorn video_effects.api:app --port 8000 --reload
 
-# 3. With motion graphics + infographics
-python -m video_effects.cli run input.mp4 -o output.mp4 --motion-graphics --infographics
+# 3. Start the web UI
+cd video_effects/app && npm run dev
 
-# 4. Auto-approve (skip interactive review)
+# 4. Open http://localhost:3000, enter a video path, and start a workflow
+
+# CLI alternative (auto-approve mode, no web UI needed):
 python -m video_effects.cli run input.mp4 -o output.mp4 --mg --auto-approve --style bold-energy
 ```
 
@@ -39,13 +41,14 @@ python -m video_effects.cli run input.mp4 -o output.mp4 --mg --auto-approve --st
 | [Face Tracking](face-tracking.md) | Face detection, spatial context, safe regions, zoom compensation, anchor modes |
 | [Styles](styles.md) | Style presets, theming system, font loading, palette conventions, creative designer |
 | [LLM Prompts](llm-prompts.md) | Prompt system, structured output, feedback loops, model selection |
-| [CLI & Config](cli-and-config.md) | CLI commands, interactive approval flow, environment variables, Temporal worker setup |
+| [CLI & Config](cli-and-config.md) | CLI commands, web UI, API server, interactive approval flow, environment variables, Temporal worker setup |
 
 ## Project Structure
 
 ```
 video_effects/
 ├── cli.py                      # CLI entry point
+├── api.py                      # FastAPI proxy for web UI
 ├── worker.py                   # Temporal worker
 ├── config.py                   # Settings (VFX_ env vars)
 ├── workflow.py                 # Main VideoEffectsWorkflow
@@ -101,6 +104,24 @@ video_effects/
 │       ├── lower_third.md
 │       ├── listicle.md
 │       └── data_animation.md
+├── app/                        # Next.js web UI (preview + approval)
+│   ├── package.json            # Next.js 16 + @remotion/player 4.0.242
+│   ├── next.config.ts          # Webpack alias: @remotion-project → ../remotion/src
+│   └── src/
+│       ├── app/
+│       │   ├── layout.tsx      # Root layout
+│       │   ├── page.tsx        # Landing page (start workflow form)
+│       │   └── workflow/[id]/
+│       │       └── page.tsx    # Stage-aware workflow viewer
+│       ├── components/
+│       │   ├── VideoPlayer.tsx     # @remotion/player wrapper
+│       │   ├── TimelineApproval.tsx # Effects timeline + approve/reject
+│       │   ├── MgApproval.tsx      # Player preview + component cards
+│       │   └── FeedbackDialog.tsx  # Rejection feedback modal
+│       ├── hooks/
+│       │   └── useWorkflow.ts  # Polls /api/workflows/{id}
+│       └── lib/
+│           └── api.ts          # Typed fetch wrappers for Python API
 └── remotion/                   # TypeScript/React Remotion project
     ├── package.json            # Remotion 4.0.242 + React 18
     └── src/

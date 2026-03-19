@@ -13,7 +13,11 @@ from .remotion import (
     render_motion_overlay,
     composite_motion_graphics,
     preview_motion_graphics,
+    render_preview_clip,
     edit_mg_plan,
+    start_studio_activity,
+    stop_studio_activity,
+    update_studio_preview_activity,
 )
 from .infographic import (
     cleanup_generated,
@@ -52,6 +56,7 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     render_motion_overlay,
     composite_motion_graphics,
     preview_motion_graphics,
+    render_preview_clip,
     cleanup_generated,
     plan_infographics,
     plan_diagrams,
@@ -66,4 +71,7 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     programmer_critique,
     programmer_generate_code,
     edit_mg_plan,
+    start_studio_activity,
+    stop_studio_activity,
+    update_studio_preview_activity,
 ]

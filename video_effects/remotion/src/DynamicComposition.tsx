@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   AbsoluteFill,
   Sequence,
-  OffthreadVideo,
+  Video,
   staticFile,
   continueRender,
   delayRender,
@@ -108,7 +108,7 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
         <ZoomDataProvider zoomData={zoomData}>
           <AbsoluteFill style={{ backgroundColor: "transparent" }}>
             {includeBaseVideo && baseVideoPath && (
-              <OffthreadVideo src={baseVideoPath} />
+              <Video src={baseVideoPath} />
             )}
             {sorted.map((comp, i) => {
               const Component = ComponentRegistry[comp.template];

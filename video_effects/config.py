@@ -35,7 +35,6 @@ class VideoEffectsSettings(BaseSettings):
     # Remotion motion graphics
     REMOTION_DIR: Optional[str] = None  # Override path to remotion/ project (default: auto-detected)
     REMOTION_CONCURRENCY: Optional[int] = None  # Remotion render concurrency (default: Remotion auto)
-
     # Infographic code generation
     INFOGRAPHIC_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per infographic
     INFOGRAPHIC_LLM_MODEL: str = "claude-opus-4-6"  # Use Opus for codegen quality
@@ -43,6 +42,11 @@ class VideoEffectsSettings(BaseSettings):
     # Programmer workflow
     PROGRAMMER_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per component
     PROGRAMMER_LLM_MODEL: str = "claude-opus-4-6"  # Opus for creative code gen
+
+    # API server
+    API_PORT: int = 8000
+    API_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    ALLOWED_FILE_DIRS: list[str] = ["/tmp/video_effects", "/Users/sidhant/sidhant-experiments"]
 
 
 settings = VideoEffectsSettings()

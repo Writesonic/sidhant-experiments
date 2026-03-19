@@ -22,6 +22,12 @@ You receive:
 - Changing `template` types (e.g., turning a title into a chart)
 - Generating new TSX code or modifying component source
 
+## Component Targeting
+
+If feedback starts with `[component:N]` (0-based index), focus edits on that specific
+component in the JSON array. Only modify the targeted component unless the feedback
+explicitly mentions others.
+
 ## Guidelines
 
 - Make the minimum changes needed to address the feedback

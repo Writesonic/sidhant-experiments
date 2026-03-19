@@ -11,6 +11,7 @@ from temporalio import activity
 from video_effects.helpers.face_tracking import detect_faces, smooth_data, _probe_decoded_size
 from video_effects.helpers.llm import call_structured
 from video_effects.helpers.remotion import composite_overlay, render_media, render_still
+from video_effects.helpers.studio import start_studio, stop_studio, update_preview_plan, write_preview_assets
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
 from video_effects.schemas.mg_templates import (
     MGTemplateSpec,
@@ -1223,14 +1224,16 @@ def composite_motion_graphics(input_data: dict) -> dict:
 
 @activity.defn(name="vfx_preview_motion_graphics")
 def preview_motion_graphics(input_data: dict) -> dict:
-    """Render preview snapshots at key frames.
+    """Render preview snapshots at key frames using StudioPreview (base video + overlays).
 
     Input: {
         "composition_plan": dict,
-        "preview_frames": list[int],   # frame numbers to capture
+        "preview_frames": list[int],
         "output_dir": str,
-        "base_video_path": str | None, # if set, include base video in preview
-        "video_info": dict | None,     # video metadata for composition sizing
+        "base_video_path": str,
+        "video_info": dict,
+        "face_data_path": str,
+        "zoom_state_path": str,
     }
     Output: {
         "snapshots": list[{"frame": int, "path": str}],
@@ -1239,25 +1242,26 @@ def preview_motion_graphics(input_data: dict) -> dict:
     plan = input_data["composition_plan"]
     frames = input_data["preview_frames"]
     output_dir = input_data["output_dir"]
-    base_video = input_data.get("base_video_path")
+    base_video = input_data.get("base_video_path", "")
     video_info = input_data.get("video_info", {})
+    face_data_path = input_data.get("face_data_path", "")
+    zoom_state_path = input_data.get("zoom_state_path", "")
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Previews render overlay only (base video not accessible to Remotion's dev server)
-    preview_plan = {**plan, "includeBaseVideo": False}
-
-    # Set composition metadata so Remotion sizes the composition correctly
-    if video_info:
-        fps = int(video_info.get("fps", 30))
-        total_frames = video_info.get("total_frames", 0) or int(video_info.get("duration", 10) * fps)
-        preview_plan.setdefault("durationInFrames", total_frames)
-        preview_plan.setdefault("fps", fps)
-        preview_plan.setdefault("width", video_info.get("width", 1920))
-        preview_plan.setdefault("height", video_info.get("height", 1080))
+    # Write preview assets so StudioPreview can resolve base video + plan
+    write_preview_assets(
+        mg_plan=plan,
+        base_video_path=base_video,
+        face_data_path=face_data_path,
+        zoom_state_path=zoom_state_path,
+        video_info=video_info,
+    )
 
     # Clamp frames to composition duration
-    max_frame = preview_plan.get("durationInFrames", 300) - 1
+    fps = int(video_info.get("fps", 30))
+    total_frames = video_info.get("total_frames", 0) or int(video_info.get("duration", 10) * fps)
+    max_frame = total_frames - 1
     frames = [f for f in frames if 0 <= f <= max_frame]
 
     snapshots = []
@@ -1265,15 +1269,53 @@ def preview_motion_graphics(input_data: dict) -> dict:
         output_path = os.path.join(output_dir, f"preview_frame_{frame_num}.png")
         activity.heartbeat(f"Rendering preview {i + 1}/{len(frames)}")
 
+        # StudioPreview reads plan.json + base video via staticFile — no props needed
         render_still(
-            composition_id="MotionOverlay",
+            composition_id="StudioPreview",
             frame=frame_num,
-            props=preview_plan,
+            props={},
             output_path=output_path,
         )
         snapshots.append({"frame": frame_num, "path": output_path})
 
     return {"snapshots": snapshots}
+
+
+@activity.defn(name="vfx_render_preview_clip")
+def render_preview_clip(input_data: dict) -> dict:
+    """Render full StudioPreview as H264 MP4 at reduced resolution for inline playback.
+
+    Input: {
+        "composition_plan": dict,
+        "output_dir": str,
+        "base_video_path": str,
+        "video_info": dict,
+        "face_data_path": str,
+        "zoom_state_path": str,
+    }
+    Output: {"clip_path": str}
+    """
+    plan = input_data["composition_plan"]
+    output_dir = input_data["output_dir"]
+    base_video = input_data.get("base_video_path", "")
+    video_info = input_data.get("video_info", {})
+    face_data_path = input_data.get("face_data_path", "")
+    zoom_state_path = input_data.get("zoom_state_path", "")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Preview assets already written by vfx_preview_motion_graphics (runs first)
+    clip_path = os.path.join(output_dir, "preview_clip.mp4")
+    render_media(
+        composition_id="StudioPreview",
+        props={},
+        output_path=clip_path,
+        codec="h264",
+        width=960,
+        height=540,
+    )
+
+    return {"clip_path": clip_path}
 
 
 @activity.defn(name="vfx_edit_mg_plan")
@@ -1306,3 +1348,50 @@ def edit_mg_plan(input_data: dict) -> dict:
 
     logger.info("MG plan edited: %s", result.get("reasoning", ""))
     return result
+
+
+@activity.defn(name="vfx_start_studio")
+def start_studio_activity(input_data: dict) -> dict:
+    """Write preview assets and start Remotion Studio.
+
+    Input: {
+        "mg_plan": dict,
+        "base_video_path": str,
+        "face_data_path": str,
+        "zoom_state_path": str,
+        "video_info": dict,
+    }
+    Output: {"studio_url": str, "pid": int, "port": int}
+    """
+    from video_effects.config import settings
+
+    write_preview_assets(
+        mg_plan=input_data["mg_plan"],
+        base_video_path=input_data.get("base_video_path", ""),
+        face_data_path=input_data.get("face_data_path", ""),
+        zoom_state_path=input_data.get("zoom_state_path", ""),
+        video_info=input_data.get("video_info", {}),
+    )
+    return start_studio(port=settings.REMOTION_STUDIO_PORT)
+
+
+@activity.defn(name="vfx_stop_studio")
+def stop_studio_activity(input_data: dict) -> dict:
+    """Stop Remotion Studio process and clean up preview assets.
+
+    Input: {"pid": int}
+    Output: {"stopped": True}
+    """
+    stop_studio(input_data["pid"])
+    return {"stopped": True}
+
+
+@activity.defn(name="vfx_update_studio_preview")
+def update_studio_preview_activity(input_data: dict) -> dict:
+    """Update preview plan.json for Studio hot-reload.
+
+    Input: {"mg_plan": dict, "video_info": dict}
+    Output: {"updated": True}
+    """
+    update_preview_plan(input_data["mg_plan"], input_data.get("video_info", {}))
+    return {"updated": True}
