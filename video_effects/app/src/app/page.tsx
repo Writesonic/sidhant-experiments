@@ -12,6 +12,7 @@ export default function Home() {
   const [mg, setMg] = useState(false);
   const [style, setStyle] = useState("");
   const [devMode, setDevMode] = useState(false);
+  const [subtitles, setSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,6 +27,7 @@ export default function Home() {
         enable_mg: mg || programmer,
         style: style || undefined,
         dev_mode: devMode,
+        enable_subtitles: subtitles,
       });
       router.push(`/workflow/${workflow_id}`);
     } catch (err) {
@@ -79,6 +81,15 @@ export default function Home() {
                   className="accent-blue-500"
                 />
                 Motion Graphics
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={subtitles}
+                  onChange={(e) => setSubtitles(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                Subtitles
               </label>
               <label className="flex items-center gap-2">
                 <input

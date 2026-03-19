@@ -65,6 +65,7 @@ async def start_workflow(body: dict[str, Any]) -> dict:
         dev_mode=body.get("dev_mode", False),
         enable_infographics=body.get("enable_mg", False),
         enable_programmer=body.get("enable_programmer", False),
+        enable_subtitles=body.get("enable_subtitles", False),
     )
 
     workflow_id = f"vfx-web-{uuid.uuid4().hex[:8]}"
@@ -103,13 +104,15 @@ async def get_workflow_status(workflow_id: str) -> dict:
     result: dict[str, Any] = {"stage": stage}
 
     try:
+        # Always include video_paths so the UI can show the video at every stage
+        result["video_paths"] = await _query(handle, "get_video_paths")
+
         if stage == "timeline_approval":
             result["timeline"] = await _query(handle, "get_timeline")
 
         elif stage == "mg_approval":
             result["mg_plan"] = await _query(handle, "get_mg_plan")
             result["video_info"] = await _query(handle, "get_video_info")
-            result["video_paths"] = await _query(handle, "get_video_paths")
 
         elif stage == "done":
             wf_result = await handle.result()

@@ -12,6 +12,7 @@ class VideoEffectsInput(BaseModel):
     dev_mode: bool = Field(False, description="Dev mode: effects triggered by explicit verbal commands")
     enable_infographics: bool = Field(False, description="Enable LLM-generated infographic overlays")
     enable_programmer: bool = Field(False, description="Enable free-hand creative programmer workflow")
+    enable_subtitles: bool = Field(False, description="Enable subtitle overlay from transcript")
 
 
 class VideoEffectsOutput(BaseModel):

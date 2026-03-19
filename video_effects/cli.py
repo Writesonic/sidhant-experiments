@@ -170,6 +170,7 @@ async def run_workflow(args) -> None:
         dev_mode=args.dev,
         enable_infographics=enable_infographics,
         enable_programmer=enable_programmer,
+        enable_subtitles=getattr(args, "subtitles", False),
     )
 
     print(f"Starting Video Effects workflow: {workflow_id}")
@@ -344,6 +345,11 @@ def main():
         "--programmer",
         action="store_true",
         help="Enable free-hand creative programmer workflow (replaces --infographics)",
+    )
+    run_parser.add_argument(
+        "--subtitles",
+        action="store_true",
+        help="Enable subtitle overlay from transcript",
     )
 
     args = parser.parse_args()

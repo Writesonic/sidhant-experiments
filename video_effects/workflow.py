@@ -80,6 +80,8 @@ class VideoEffectsWorkflow:
         long_timeout = timedelta(minutes=30)
 
         self._workflow_stage = "analyzing"
+        # Expose input video immediately so the UI can show it at every stage
+        self._video_paths = {"base_video": video_path, "face_data": "", "zoom_state": ""}
 
         # ── G1: Extract video info + audio (parallel) ──
         # TODO: Move this to a smaller function outside
@@ -349,6 +351,9 @@ class VideoEffectsWorkflow:
         base_output = compose_result["output_video"]
         mg_applied = 0
 
+        # Expose base video early so the UI can show it during processing stages
+        self._video_paths = {"base_video": base_output, "face_data": "", "zoom_state": ""}
+
         # Pre-compute word segments (needed for subtitle obstacle + subtitle injection)
         subtitle_segments = transcript_result.get("segments", [])
         word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
@@ -398,7 +403,7 @@ class VideoEffectsWorkflow:
                         "components": time_domain_comps,
                         "spatial_context": spatial_context,
                         "video_fps": fps,
-                        "static_obstacles": [SUBTITLE_BOUNDS] if word_segments else [],
+                        "static_obstacles": [SUBTITLE_BOUNDS] if (input.enable_subtitles and word_segments) else [],
                     },
                     start_to_close_timeout=activity_timeout,
                 )
@@ -421,9 +426,8 @@ class VideoEffectsWorkflow:
                         "Post-merge validation: %s", revalidation["validation_issues"]
                     )
 
-        # ── Always inject subtitles from transcript ──
-        # TODO: This can be a separate function.
-        if word_segments:
+        # ── Inject subtitles from transcript (if enabled) ──
+        if input.enable_subtitles and word_segments:
             fps = int(video_info.get("fps", 30))
 
             # Build word list in frame-domain for the Subtitles component

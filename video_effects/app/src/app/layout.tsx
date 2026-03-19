@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "VFX Studio",
+  title: "Sidhant's Epic Video Effects Studio",
   description: "Video effects workflow preview",
 };
 
@@ -15,7 +15,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-neutral-950 text-neutral-100 min-h-screen antialiased">
         <header className="max-w-6xl mx-auto px-4 pt-6 pb-2">
-          <span className="text-sm font-medium text-neutral-500">VFX Studio</span>
+          <span className="text-sm font-medium text-neutral-500">Sidhant's Epic Video Effects Studio</span>
         </header>
         <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
       </body>

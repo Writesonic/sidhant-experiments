@@ -8,6 +8,7 @@ export async function startWorkflow(params: {
   enable_mg?: boolean;
   style?: string;
   dev_mode?: boolean;
+  enable_subtitles?: boolean;
 }): Promise<{ workflow_id: string }> {
   const res = await fetch(`${API_BASE}/api/workflows`, {
     method: "POST",
