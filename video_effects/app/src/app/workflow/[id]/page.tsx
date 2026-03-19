@@ -18,9 +18,9 @@ export default function WorkflowPage({
 
   if (error && !data) {
     return (
-      <Card className="border-red-500/30 p-6">
-        <p className="text-red-400 text-sm">Failed to connect: {error}</p>
-        <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 mt-4 inline-block">
+      <Card className="border-negative-border p-6">
+        <p className="text-negative text-sm">Failed to connect: {error}</p>
+        <Link href="/" className="text-sm text-text-dim hover:text-text mt-4 inline-block">
           Try Again
         </Link>
       </Card>
@@ -138,10 +138,10 @@ export default function WorkflowPage({
             )}
           </div>
           <Card>
-            <p className="text-xs text-neutral-500 mb-2">Output path</p>
-            <code className="text-sm text-neutral-200 break-all">{String(r.output_video)}</code>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Output path</p>
+            <code className="text-sm text-text break-all">{String(r.output_video)}</code>
           </Card>
-          <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 inline-block">
+          <Link href="/" className="text-sm text-text-dim hover:text-text inline-block">
             Start New
           </Link>
         </div>
@@ -154,9 +154,9 @@ export default function WorkflowPage({
       <>
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up">
-          <Card className="border-red-500/30 p-6">
-            <pre className="overflow-x-auto"><code className="text-sm text-red-300">{data.error ?? "Unknown error"}</code></pre>
-            <Link href="/" className="text-sm text-neutral-400 hover:text-neutral-200 mt-4 inline-block">
+          <Card className="border-negative-border p-6">
+            <pre className="overflow-x-auto"><code className="text-sm text-negative">{data.error ?? "Unknown error"}</code></pre>
+            <Link href="/" className="text-sm text-text-dim hover:text-text mt-4 inline-block">
               Try Again
             </Link>
           </Card>

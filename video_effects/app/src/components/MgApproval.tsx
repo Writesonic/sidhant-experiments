@@ -8,19 +8,19 @@ import { FeedbackDialog } from "./FeedbackDialog";
 import { Badge, Card, ActionBar } from "@/components/ui";
 
 const TEMPLATE_BORDERS: Record<string, string> = {
-  animated_title: "border-l-blue-500",
-  lower_third: "border-l-amber-500",
-  listicle: "border-l-emerald-500",
-  data_animation: "border-l-purple-500",
-  generated: "border-l-cyan-500",
+  animated_title: "border-l-fx-zoom",
+  lower_third: "border-l-fx-color-change",
+  listicle: "border-l-fx-speed-ramp",
+  data_animation: "border-l-fx-blur",
+  generated: "border-l-fx-vignette",
 };
 
 const TEMPLATE_FILLS: Record<string, string> = {
-  animated_title: "bg-blue-500/60",
-  lower_third: "bg-amber-500/60",
-  listicle: "bg-emerald-500/60",
-  data_animation: "bg-purple-500/60",
-  generated: "bg-cyan-500/60",
+  animated_title: "bg-fx-zoom/60",
+  lower_third: "bg-fx-color-change/60",
+  listicle: "bg-fx-speed-ramp/60",
+  data_animation: "bg-fx-blur/60",
+  generated: "bg-fx-vignette/60",
 };
 
 interface ComponentCard {
@@ -115,16 +115,16 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
   }
 
   const borderClass = (template: string) =>
-    TEMPLATE_BORDERS[template] ?? "border-l-neutral-600";
+    TEMPLATE_BORDERS[template] ?? "border-l-text-dim";
 
   const fillClass = (template: string) =>
-    TEMPLATE_FILLS[template] ?? "bg-neutral-500/60";
+    TEMPLATE_FILLS[template] ?? "bg-text-muted/60";
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Motion Graphics Preview</h2>
+      <h2 className="text-2xl font-display font-bold">Motion Graphics Preview</h2>
 
-      <Card className="p-0 overflow-hidden rounded-xl">
+      <Card className="p-0 overflow-hidden">
         <VideoPlayer
           plan={plan}
           width={width}
@@ -136,12 +136,12 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
 
       {plan.colorPalette.length > 0 && (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-500">Palette</span>
+          <span className="text-xs text-text-muted">Palette</span>
           <div className="flex gap-1">
             {plan.colorPalette.map((color, i) => (
               <div
                 key={i}
-                className="w-5 h-5 rounded-full border border-neutral-700"
+                className="w-5 h-5 border border-border-card"
                 style={{ backgroundColor: color }}
               />
             ))}
@@ -162,23 +162,23 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <Badge label={card.template} type={card.template} />
-                  <span className="text-sm font-mono text-neutral-300">
+                  <span className="text-sm font-mono text-text-secondary">
                     {card.timeRange}
                   </span>
                 </div>
                 {card.propsSummary && (
-                  <div className="text-xs text-neutral-400">{card.propsSummary}</div>
+                  <div className="text-xs text-text-dim">{card.propsSummary}</div>
                 )}
               </div>
 
               <div className="flex items-center gap-3">
                 {card.bounds && (
                   <div
-                    className="relative bg-neutral-800 rounded"
+                    className="relative bg-surface"
                     style={{ width: 60, height: 34 }}
                   >
                     <div
-                      className={`absolute rounded-sm ${fillClass(card.template)}`}
+                      className={`absolute ${fillClass(card.template)}`}
                       style={{
                         left: `${card.bounds.x * 100}%`,
                         top: `${card.bounds.y * 100}%`,
@@ -198,14 +198,14 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
                       })
                     }
                     disabled={sending}
-                    className="px-3 py-1 text-xs border border-neutral-700 text-neutral-400 hover:bg-neutral-800 rounded transition-colors disabled:opacity-40"
+                    className="px-3 py-1 text-xs border border-border-card text-text-dim hover:bg-surface-warm transition-colors disabled:opacity-40"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => handleRemove(card.index)}
                     disabled={sending}
-                    className="px-3 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded transition-colors disabled:opacity-40"
+                    className="px-3 py-1 text-xs border border-negative-border text-negative hover:bg-negative-fill transition-colors disabled:opacity-40"
                   >
                     Remove
                   </button>

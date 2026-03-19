@@ -1,8 +1,55 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Syne:wght@700;800&display=swap');
 
 @theme {
+  /* Colors */
+  --color-bg: #0a0a0a;
+  --color-surface: #0f0f0f;
+  --color-surface-warm: #0f0e0b;
+  --color-border: #1a1a1a;
+  --color-border-card: #222222;
+  --color-border-warm: #2a2518;
+
+  --color-text: #e8e0d0;
+  --color-text-secondary: #b0a090;
+  --color-text-muted: #776655;
+  --color-text-dim: #666666;
+  --color-text-ghost: #555555;
+  --color-text-invisible: #444444;
+
+  --color-accent: #c8a96e;
+  --color-accent-dim: #c8a96e44;
+  --color-accent-fill: #c8a96e11;
+  --color-accent-bg: #141209;
+
+  --color-negative: #ff8888;
+  --color-negative-fill: #ff666611;
+  --color-negative-border: #ff666644;
+
+  /* Warm effect palette */
+  --color-fx-zoom: #c8a96e;
+  --color-fx-blur: #b08a9a;
+  --color-fx-color-change: #c4885c;
+  --color-fx-whip: #c07068;
+  --color-fx-speed-ramp: #88a070;
+  --color-fx-vignette: #908878;
+
+  /* Fonts */
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+
+  /* Animations */
   --animate-slide-up: slide-up 0.3s ease-out;
   --animate-fade-in: fade-in 0.2s ease-out;
+}
+
+:root {
+  font-family: var(--font-mono);
+}
+
+* {
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 @keyframes slide-up {

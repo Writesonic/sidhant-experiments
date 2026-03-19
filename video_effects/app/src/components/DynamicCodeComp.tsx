@@ -10,7 +10,7 @@ function ErrorOverlay({ message }: { message: string }) {
   return (
     <AbsoluteFill
       style={{
-        backgroundColor: "rgba(220, 38, 38, 0.15)",
+        backgroundColor: "var(--color-negative-fill)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -20,15 +20,15 @@ function ErrorOverlay({ message }: { message: string }) {
       <div
         style={{
           background: "rgba(0,0,0,0.85)",
-          borderRadius: 12,
+          borderRadius: 0,
           padding: 24,
           maxWidth: 600,
-          fontFamily: "monospace",
+          fontFamily: "var(--font-mono)",
           fontSize: 14,
-          color: "#f87171",
+          color: "var(--color-negative)",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
-          border: "1px solid rgba(248, 113, 113, 0.3)",
+          border: "1px solid var(--color-negative-border)",
         }}
       >
         {message}

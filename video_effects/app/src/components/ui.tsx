@@ -4,20 +4,20 @@ import React from "react";
 import type { EffectType, WorkflowStage } from "@/lib/api";
 
 const EFFECT_COLORS: Record<EffectType, { bg: string; border: string; text: string }> = {
-  zoom: { bg: "bg-blue-500/15", border: "border-blue-500/40", text: "text-blue-300" },
-  blur: { bg: "bg-purple-500/15", border: "border-purple-500/40", text: "text-purple-300" },
-  color_change: { bg: "bg-amber-500/15", border: "border-amber-500/40", text: "text-amber-300" },
-  whip: { bg: "bg-rose-500/15", border: "border-rose-500/40", text: "text-rose-300" },
-  speed_ramp: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300" },
-  vignette: { bg: "bg-slate-500/15", border: "border-slate-500/40", text: "text-slate-300" },
+  zoom: { bg: "bg-fx-zoom/15", border: "border-fx-zoom/40", text: "text-fx-zoom" },
+  blur: { bg: "bg-fx-blur/15", border: "border-fx-blur/40", text: "text-fx-blur" },
+  color_change: { bg: "bg-fx-color-change/15", border: "border-fx-color-change/40", text: "text-fx-color-change" },
+  whip: { bg: "bg-fx-whip/15", border: "border-fx-whip/40", text: "text-fx-whip" },
+  speed_ramp: { bg: "bg-fx-speed-ramp/15", border: "border-fx-speed-ramp/40", text: "text-fx-speed-ramp" },
+  vignette: { bg: "bg-fx-vignette/15", border: "border-fx-vignette/40", text: "text-fx-vignette" },
 };
 
-const NEUTRAL = { bg: "bg-neutral-500/15", border: "border-neutral-500/40", text: "text-neutral-300" };
+const NEUTRAL = { bg: "bg-text-muted/15", border: "border-text-muted/40", text: "text-text-muted" };
 
 export function Badge({ label, type }: { label: string; type?: EffectType | string }) {
   const c = (type && EFFECT_COLORS[type as EffectType]) || NEUTRAL;
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${c.bg} ${c.border} ${c.text}`}>
+    <span className={`inline-flex items-center px-2.5 py-0.5 text-[11px] tracking-[0.05em] font-medium border ${c.bg} ${c.border} ${c.text}`}>
       {label}
     </span>
   );
@@ -50,25 +50,25 @@ export function StageIndicator({ currentStage }: { currentStage: WorkflowStage }
             <div className="flex flex-col items-center gap-1">
               <div className="relative flex items-center justify-center w-6 h-6">
                 {completed ? (
-                  <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/60 flex items-center justify-center">
-                    <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                  <div className="w-6 h-6 bg-accent/20 border border-accent/60 flex items-center justify-center">
+                    <svg className="w-3 h-3 text-accent" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M2 6l3 3 5-5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </div>
                 ) : active ? (
-                  <div className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-400/60 flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                  <div className="w-6 h-6 bg-accent/20 border border-accent/60 flex items-center justify-center">
+                    <div className="w-2 h-2 bg-accent animate-pulse" />
                   </div>
                 ) : (
-                  <div className="w-6 h-6 rounded-full bg-neutral-800 border border-neutral-700" />
+                  <div className="w-6 h-6 bg-surface border border-border-card" />
                 )}
               </div>
-              <span className={`text-[10px] leading-none ${active ? "text-blue-300 font-medium" : completed ? "text-emerald-400/80" : "text-neutral-600"}`}>
+              <span className={`text-[10px] uppercase tracking-[0.15em] font-mono leading-none ${active ? "text-accent font-medium" : completed ? "text-accent/80" : "text-text-dim"}`}>
                 {name}
               </span>
             </div>
             {i < STAGES.length - 1 && (
-              <div className={`flex-1 h-px mx-1 mb-4 ${i < currentIdx ? "bg-emerald-500/40" : "bg-neutral-700"}`} />
+              <div className={`flex-1 h-px mx-1 mb-4 ${i < currentIdx ? "bg-accent/40" : "bg-border-card"}`} />
             )}
           </React.Fragment>
         );
@@ -79,7 +79,7 @@ export function StageIndicator({ currentStage }: { currentStage: WorkflowStage }
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-neutral-900/80 border border-neutral-800 rounded-xl ${className ?? ""}`}>
+    <div className={`bg-surface border border-border-card transition-all duration-200 ${className ?? ""}`}>
       {children}
     </div>
   );
@@ -103,14 +103,14 @@ export function ActionBar({
       <button
         onClick={onApprove}
         disabled={disabled}
-        className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="px-5 py-2 bg-accent hover:bg-accent/90 text-bg font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {approveLabel}
       </button>
       <button
         onClick={onReject}
         disabled={disabled}
-        className="px-5 py-2 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500/10 font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="px-5 py-2 border border-negative-border text-negative hover:bg-negative-fill font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {rejectLabel}
       </button>
@@ -121,8 +121,8 @@ export function ActionBar({
 export function Stat({ value, label }: { value: string | number; label: string }) {
   return (
     <div className="flex flex-col items-center gap-1">
-      <span className="text-2xl font-bold text-white">{value}</span>
-      <span className="text-xs text-neutral-500">{label}</span>
+      <span className="text-2xl font-bold text-text">{value}</span>
+      <span className="text-xs text-text-muted">{label}</span>
     </div>
   );
 }
@@ -134,13 +134,13 @@ export function ActivityIndicator({ stage, description }: { stage: string; descr
         {[0, 1, 2].map((i) => (
           <div
             key={i}
-            className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"
+            className="w-2 h-2 bg-accent animate-pulse"
             style={{ animationDelay: `${i * 150}ms` }}
           />
         ))}
       </div>
-      <span className="text-sm font-medium text-neutral-200">{stage}</span>
-      {description && <span className="text-xs text-neutral-500">{description}</span>}
+      <span className="text-sm font-medium text-text">{stage}</span>
+      {description && <span className="text-xs text-text-muted">{description}</span>}
     </div>
   );
 }

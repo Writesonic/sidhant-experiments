@@ -119,12 +119,12 @@ export default function TemplateDetailPage() {
   }, []);
 
   if (!template) {
-    return <p className="text-neutral-500 text-sm">Loading...</p>;
+    return <p className="text-text-muted text-sm">Loading...</p>;
   }
 
   return (
     <div className="animate-slide-up">
-      <h1 className="text-2xl font-bold tracking-tight mb-6">
+      <h1 className="text-2xl font-display font-bold tracking-tight mb-6">
         Edit: {template.display_name}
       </h1>
 
@@ -134,7 +134,7 @@ export default function TemplateDetailPage() {
           {/* Chat */}
           <Card className="p-4 max-h-48 overflow-y-auto">
             {chat.length === 0 ? (
-              <p className="text-neutral-500 text-sm">
+              <p className="text-text-muted text-sm">
                 Use prompts to modify the component...
               </p>
             ) : (
@@ -142,9 +142,9 @@ export default function TemplateDetailPage() {
                 {chat.map((msg, i) => (
                   <div
                     key={i}
-                    className={`text-sm ${msg.role === "user" ? "text-blue-300" : "text-neutral-300"}`}
+                    className={`text-sm ${msg.role === "user" ? "text-accent" : "text-text-secondary"}`}
                   >
-                    <span className="font-medium text-neutral-500 mr-2">
+                    <span className="font-medium text-text-muted mr-2">
                       {msg.role === "user" ? "You:" : "AI:"}
                     </span>
                     {msg.content}
@@ -163,12 +163,12 @@ export default function TemplateDetailPage() {
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
               placeholder="Edit: e.g. add a glow effect..."
-              className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="flex-1 bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
             <button
               onClick={handleGenerate}
               disabled={generating || !prompt.trim()}
-              className="px-4 h-10 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-700 text-white text-sm font-semibold transition-colors"
+              className="px-4 h-10 bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg text-sm font-semibold transition-colors"
             >
               {generating ? "..." : "Edit"}
             </button>
@@ -179,43 +179,43 @@ export default function TemplateDetailPage() {
             value={code}
             onChange={(e) => setCode(e.target.value)}
             spellCheck={false}
-            className="w-full h-72 bg-neutral-950 border border-neutral-700 rounded-lg p-3 font-mono text-xs text-neutral-200 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+            className="w-full h-72 bg-bg border border-border-card p-3 font-mono text-xs text-text resize-y focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
           />
 
           {compileError && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-xs font-mono whitespace-pre-wrap">
+            <div className="bg-negative-fill border border-negative-border p-3 text-negative text-xs font-mono whitespace-pre-wrap">
               {compileError}
             </div>
           )}
 
           {/* Update form */}
           <Card className="p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-300">Update Template</h3>
+            <h3 className="text-sm font-semibold text-text-secondary">Update Template</h3>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Display name"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Description"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
             <input
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="Tags (comma-separated)"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
             <button
               onClick={handleUpdate}
               disabled={saving || !displayName.trim() || !code.trim()}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-700 rounded-lg h-10 text-sm font-semibold transition-colors"
+              className="w-full bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg h-10 text-sm font-semibold transition-colors"
             >
               {saving ? "Saving..." : "Update"}
             </button>
@@ -225,8 +225,8 @@ export default function TemplateDetailPage() {
         {/* Right column: Preview */}
         <div className="flex flex-col gap-4">
           <Card className="p-4">
-            <h3 className="text-sm font-semibold text-neutral-300 mb-3">Live Preview</h3>
-            <div className="rounded-lg overflow-hidden bg-black aspect-video">
+            <h3 className="text-sm font-semibold text-text-secondary mb-3">Live Preview</h3>
+            <div className="overflow-hidden bg-black aspect-video">
               {code.trim() ? (
                 <Player
                   component={PreviewComponent}
@@ -240,7 +240,7 @@ export default function TemplateDetailPage() {
                   loop
                 />
               ) : (
-                <div className="w-full h-full flex items-center justify-center text-neutral-600 text-sm">
+                <div className="w-full h-full flex items-center justify-center text-text-ghost text-sm">
                   No code to preview
                 </div>
               )}

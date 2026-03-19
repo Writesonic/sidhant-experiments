@@ -6,12 +6,12 @@ import { FeedbackDialog } from "./FeedbackDialog";
 import { Badge, Card, ActionBar } from "./ui";
 
 const TIMELINE_COLORS: Record<string, string> = {
-  zoom: "bg-blue-500/30",
-  blur: "bg-purple-500/30",
-  color_change: "bg-amber-500/30",
-  whip: "bg-rose-500/30",
-  speed_ramp: "bg-emerald-500/30",
-  vignette: "bg-slate-500/30",
+  zoom: "bg-fx-zoom/30",
+  blur: "bg-fx-blur/30",
+  color_change: "bg-fx-color-change/30",
+  whip: "bg-fx-whip/30",
+  speed_ramp: "bg-fx-speed-ramp/30",
+  vignette: "bg-fx-vignette/30",
 };
 
 function formatTime(s: number) {
@@ -108,7 +108,6 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
 
   return (
     <div className="space-y-4">
-      {/* 1. Video player */}
       {baseVideoPath && (
         <Card className="p-0 overflow-hidden">
           <video
@@ -120,34 +119,31 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         </Card>
       )}
 
-      {/* 2. Timeline bar */}
-      <div className="relative h-12 bg-neutral-900 rounded-lg overflow-hidden">
+      <div className="relative h-12 bg-surface overflow-hidden">
         {effects.map((e, i) => {
           const left = (e.start_time / safeDuration) * 100;
           const width = ((e.end_time - e.start_time) / safeDuration) * 100;
-          const color = TIMELINE_COLORS[e.effect_type] ?? "bg-neutral-500/30";
+          const color = TIMELINE_COLORS[e.effect_type] ?? "bg-text-muted/30";
           return (
             <button
               key={i}
               title={`${e.effect_type} ${formatTime(e.start_time)} - ${formatTime(e.end_time)}`}
               onClick={() => handleEffectClick(i)}
-              className={`absolute top-0 h-full cursor-pointer transition-opacity hover:opacity-80 ${color} ${selectedIndex === i ? "ring-1 ring-white/40" : ""}`}
+              className={`absolute top-0 h-full cursor-pointer transition-opacity hover:opacity-80 ${color} ${selectedIndex === i ? "ring-1 ring-accent/60" : ""}`}
               style={{ left: `${left}%`, width: `${Math.max(width, 0.5)}%` }}
             />
           );
         })}
 
-        {/* Playhead */}
         <div
           className="absolute top-0 h-full w-0.5 bg-white/80 pointer-events-none z-10"
           style={{ left: `${playheadPosition * 100}%` }}
         />
 
-        {/* Time labels */}
         {timeLabels.map(({ pct, label }) => (
           <span
             key={pct}
-            className="absolute bottom-0.5 text-[9px] text-neutral-500 pointer-events-none -translate-x-1/2"
+            className="absolute bottom-0.5 text-[9px] text-text-ghost pointer-events-none -translate-x-1/2"
             style={{ left: `${Math.min(Math.max(pct * 100, 2), 98)}%` }}
           >
             {label}
@@ -155,7 +151,6 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         ))}
       </div>
 
-      {/* 3. Effect list */}
       <div className="max-h-[300px] overflow-y-auto space-y-1">
         {effects.map((e, i) => {
           const params = effectParamSummary(e);
@@ -166,30 +161,27 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
             <div
               key={i}
               onClick={() => handleEffectClick(i)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-neutral-800/60 ${isSelected ? "border-l-2 border-l-blue-400 bg-neutral-800/40" : "border-l-2 border-l-transparent"}`}
+              className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors hover:bg-surface-warm ${isSelected ? "border-l-2 border-l-accent bg-accent-bg" : "border-l-2 border-l-transparent"}`}
             >
-              {/* Left: badge + time range */}
               <div className="flex flex-col gap-0.5 min-w-[110px] shrink-0">
                 <Badge label={e.effect_type} type={e.effect_type} />
-                <span className="font-mono text-xs text-neutral-500">
+                <span className="font-mono text-xs text-text-muted">
                   {formatTime(e.start_time)} - {formatTime(e.end_time)}
                 </span>
               </div>
 
-              {/* Center: verbal cue + confidence */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-neutral-200 truncate">{e.verbal_cue}</p>
-                <div className="mt-1 h-1 rounded-full bg-neutral-800 w-full">
+                <p className="text-sm text-text truncate">{e.verbal_cue}</p>
+                <div className="mt-1 h-1 bg-border-card w-full">
                   <div
-                    className="h-1 rounded-full bg-blue-500/60"
+                    className="h-1 bg-accent/60"
                     style={{ width: `${confidencePct}%` }}
                   />
                 </div>
               </div>
 
-              {/* Right: param summary */}
               {params && (
-                <span className="font-mono text-xs text-neutral-500 shrink-0 text-right max-w-[160px] truncate">
+                <span className="font-mono text-xs text-text-muted shrink-0 text-right max-w-[160px] truncate">
                   {params}
                 </span>
               )}
@@ -198,12 +190,10 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         })}
       </div>
 
-      {/* Summary */}
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm text-text-muted">
         {effects.length} effect{effects.length !== 1 ? "s" : ""} | {timeline.conflicts_resolved} conflict{timeline.conflicts_resolved !== 1 ? "s" : ""} resolved
       </p>
 
-      {/* 4. ActionBar */}
       <ActionBar
         onApprove={handleApprove}
         onReject={() => setShowFeedback(true)}

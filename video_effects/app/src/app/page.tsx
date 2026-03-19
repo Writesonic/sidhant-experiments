@@ -48,15 +48,15 @@ export default function Home() {
     <div className="min-h-[80vh] flex items-center justify-center animate-slide-up">
       <Card className="p-8 w-full max-w-lg">
         <div className="mb-6">
-          <h1 className="text-4xl font-bold tracking-tight">VFX Studio</h1>
-          <p className="text-neutral-500 text-sm mt-1">
+          <h1 className="text-4xl font-display font-[800] tracking-[-0.02em]">Sidhant's Epic Video Effects Studio</h1>
+          <p className="text-text-secondary text-sm mt-1">
             Professional video effects workflow
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-neutral-400 mb-1">
+            <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-1">
               Video path
             </label>
             <input
@@ -65,19 +65,19 @@ export default function Home() {
               onChange={(e) => setVideoPath(e.target.value)}
               placeholder="/path/to/video.mp4"
               required
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="w-full bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
           </div>
 
           <div>
-            <span className="block text-sm text-neutral-400 mb-2">Options</span>
+            <span className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Options</span>
             <div className="flex gap-6 text-sm">
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   checked={programmer}
                   onChange={(e) => setProgrammer(e.target.checked)}
-                  className="accent-blue-500"
+                  className="accent-accent"
                 />
                 Programmer
               </label>
@@ -86,7 +86,7 @@ export default function Home() {
                   type="checkbox"
                   checked={mg}
                   onChange={(e) => setMg(e.target.checked)}
-                  className="accent-blue-500"
+                  className="accent-accent"
                 />
                 Motion Graphics
               </label>
@@ -95,7 +95,7 @@ export default function Home() {
                   type="checkbox"
                   checked={subtitles}
                   onChange={(e) => setSubtitles(e.target.checked)}
-                  className="accent-blue-500"
+                  className="accent-accent"
                 />
                 Subtitles
               </label>
@@ -104,7 +104,7 @@ export default function Home() {
                   type="checkbox"
                   checked={devMode}
                   onChange={(e) => setDevMode(e.target.checked)}
-                  className="accent-blue-500"
+                  className="accent-accent"
                 />
                 Dev mode
               </label>
@@ -112,7 +112,7 @@ export default function Home() {
           </div>
 
           <div>
-            <label className="block text-sm text-neutral-400 mb-1">
+            <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-1">
               Style (optional)
             </label>
             <input
@@ -120,7 +120,7 @@ export default function Home() {
               value={style}
               onChange={(e) => setStyle(e.target.value)}
               placeholder="e.g. bold, minimal"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="w-full bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
             />
           </div>
 
@@ -129,7 +129,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setShowPinning(!showPinning)}
-                className="text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                className="text-sm text-text-dim hover:text-text transition-colors"
               >
                 {showPinning ? "Hide" : "Pin"} library templates ({pinnedTemplates.size}/{libraryTemplates.length})
               </button>
@@ -149,10 +149,10 @@ export default function Home() {
                             return next;
                           });
                         }}
-                        className={`px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+                        className={`px-3 py-1 text-xs font-medium border transition-colors ${
                           pinned
-                            ? "bg-blue-500/20 border-blue-500/50 text-blue-300"
-                            : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200"
+                            ? "bg-accent-fill border-accent-dim text-accent"
+                            : "bg-surface border-border-card text-text-dim hover:text-text"
                         }`}
                       >
                         {t.display_name}
@@ -165,7 +165,7 @@ export default function Home() {
           )}
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm">
+            <div className="bg-negative-fill border border-negative-border p-3 text-negative text-sm">
               {error}
             </div>
           )}
@@ -173,7 +173,7 @@ export default function Home() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-neutral-700 rounded-lg h-11 px-4 text-base font-semibold transition-colors"
+            className="w-full bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg h-11 px-4 text-base font-semibold transition-colors"
           >
             {loading ? "Starting..." : "Start Workflow"}
           </button>

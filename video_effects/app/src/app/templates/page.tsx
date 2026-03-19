@@ -16,7 +16,7 @@ function TemplatePreview({ code }: { code: string }) {
   }, []);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-black aspect-video">
+    <div className="overflow-hidden bg-black aspect-video">
       <Player
         component={PreviewComp}
         inputProps={{ code }}
@@ -56,39 +56,39 @@ export default function TemplatesPage() {
     <div className="animate-slide-up">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Component Gallery</h1>
-          <p className="text-neutral-500 text-sm mt-1">
+          <h1 className="text-3xl font-display font-bold tracking-tight">Component Gallery</h1>
+          <p className="text-text-secondary text-sm mt-1">
             Reusable motion graphics templates
           </p>
         </div>
         <Link
           href="/templates/create"
-          className="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors"
+          className="px-5 py-2.5 bg-accent hover:bg-accent/90 text-bg font-semibold text-sm transition-colors"
         >
           Create New
         </Link>
       </div>
 
       {loading ? (
-        <p className="text-neutral-500 text-sm">Loading...</p>
+        <p className="text-text-muted text-sm">Loading...</p>
       ) : templates.length === 0 ? (
         <Card className="p-12 text-center">
-          <p className="text-neutral-400 mb-4">No templates yet</p>
+          <p className="text-text-dim mb-4">No templates yet</p>
           <Link
             href="/templates/create"
-            className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+            className="text-accent hover:text-accent/80 text-sm font-medium"
           >
             Create your first template
           </Link>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {templates.map((t) => (
             <Card key={t.id} className="p-4 flex flex-col gap-3">
               <TemplatePreview code={t.tsx_code} />
               <div>
-                <h3 className="font-semibold text-white">{t.display_name}</h3>
-                <p className="text-neutral-400 text-sm mt-1 line-clamp-2">
+                <h3 className="font-semibold text-text">{t.display_name}</h3>
+                <p className="text-text-dim text-sm mt-1 line-clamp-2">
                   {t.description}
                 </p>
               </div>
@@ -99,19 +99,19 @@ export default function TemplatesPage() {
                   ))}
                 </div>
               )}
-              <div className="text-xs text-neutral-600">
+              <div className="text-xs text-text-ghost">
                 {t.created_at ? new Date(t.created_at).toLocaleDateString() : ""}
               </div>
               <div className="flex gap-2 mt-auto pt-1">
                 <Link
                   href={`/templates/${t.id}`}
-                  className="px-3 py-1.5 rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-800 text-xs font-medium transition-colors"
+                  className="px-3 py-1.5 border border-border-card text-text-dim hover:bg-surface-warm text-xs font-medium transition-colors"
                 >
                   Edit
                 </Link>
                 <button
                   onClick={() => handleDelete(t.id)}
-                  className="px-3 py-1.5 rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs font-medium transition-colors"
+                  className="px-3 py-1.5 border border-negative-border text-negative hover:bg-negative-fill text-xs font-medium transition-colors"
                 >
                   Delete
                 </button>

@@ -14,12 +14,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-neutral-950 text-neutral-100 min-h-screen antialiased">
+      <body className="bg-bg text-text min-h-screen antialiased font-mono">
         <header className="max-w-6xl mx-auto px-4 pt-6 pb-2 flex items-center gap-6">
-          <span className="text-sm font-medium text-neutral-500">Sidhant's Epic Video Effects Studio</span>
+          <span className="text-sm font-medium text-text-muted">Sidhant's Epic Video Effects Studio</span>
           <nav className="flex gap-4 text-sm">
-            <Link href="/" className="text-neutral-400 hover:text-white transition-colors">VFX Studio</Link>
-            <Link href="/templates" className="text-neutral-400 hover:text-white transition-colors">Gallery</Link>
+            <Link href="/" className="text-text-dim hover:text-text transition-colors">VFX Studio</Link>
+            <Link href="/templates" className="text-text-dim hover:text-text transition-colors">Gallery</Link>
           </nav>
         </header>
         <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
