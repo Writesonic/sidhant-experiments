@@ -12,6 +12,7 @@ from temporalio import activity
 from video_effects.config import settings
 from video_effects.helpers.llm import call_structured, call_text, load_prompt
 from video_effects.helpers.remotion import render_still, _get_remotion_dir
+from video_effects.schemas import template_library
 from video_effects.schemas.infographic import (
     InfographicPlanResponse,
 )
@@ -66,6 +67,10 @@ def cleanup_generated(input_data: dict) -> dict:
             if f.name != ".gitignore":
                 f.unlink()
                 cleaned += 1
+
+    # Always write an empty registry so live imports don't break
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    _rebuild_registry(generated_dir)
 
     logger.info("Cleaned %d generated files", cleaned)
     return {"cleaned": cleaned}
@@ -439,12 +444,16 @@ def _derive_export_name(component_id: str) -> str:
 def _rebuild_registry(
     generated_dir: Path,
     ensure_component: tuple[str, str] | None = None,
+    ensure_components: dict[str, str] | None = None,
 ) -> None:
     """Rebuild _registry.ts from all .tsx files in generated/.
 
     Args:
         ensure_component: Optional (component_id, export_name) to guarantee
             inclusion even if glob hasn't caught up yet.
+        ensure_components: Optional mapping of {component_id: export_name}
+            to override derived names (used for library templates whose
+            export names don't match their filenames).
     """
     registry_path = generated_dir / "_registry.ts"
 
@@ -459,8 +468,15 @@ def _rebuild_registry(
         cid, ename = ensure_component
         components[cid] = ename
 
+    if ensure_components:
+        components.update(ensure_components)
+
     if not components:
-        registry_path.unlink(missing_ok=True)
+        registry_path.write_text(
+            'import React from "react";\n\n'
+            "type ComponentMap = { [key: string]: React.FC<any> };\n\n"
+            "export const GeneratedRegistry: ComponentMap = {};\n"
+        )
         return
 
     imports = []
@@ -569,3 +585,55 @@ def build_generated_registry(input_data: dict) -> dict:
         "components": remotion_components,
         "registry_path": str(registry_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# A5: Materialize library templates
+# ---------------------------------------------------------------------------
+
+_LIBRARY_IMPORT_PREAMBLE = """\
+import React, { useMemo, useCallback, useRef, useEffect, useState } from "react";
+import { useCurrentFrame, useVideoConfig, interpolate, spring, AbsoluteFill, Sequence, Img } from "remotion";
+"""
+
+
+@activity.defn(name="vfx_materialize_library_templates")
+def materialize_library_templates(input_data: dict) -> dict:
+    """Write library template TSX files to generated/ and rebuild registry.
+
+    Input: {"template_ids": list[str]}
+    Output: {"materialized": list[str]}
+    """
+    template_ids = input_data.get("template_ids", [])
+    if not template_ids:
+        return {"materialized": []}
+
+    remotion_dir = _get_remotion_dir()
+    generated_dir = remotion_dir / "src" / "components" / "generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+
+    materialized = []
+
+    with _REGISTRY_LOCK:
+        export_map: dict[str, str] = {}
+
+        for tid in template_ids:
+            tpl = template_library.get_template(tid)
+            if tpl is None:
+                logger.warning("Library template '%s' not found, skipping", tid)
+                continue
+
+            component_path = generated_dir / f"{tid}.tsx"
+            if not component_path.exists():
+                tsx_code = tpl.tsx_code
+                tsx_code_clean = re.sub(r"^import\s+.*?['\";]\s*$", "", tsx_code, flags=re.MULTILINE)
+                full_code = _LIBRARY_IMPORT_PREAMBLE + "\n" + tsx_code_clean
+                component_path.write_text(full_code)
+                logger.info("Materialized library template: %s", tid)
+
+            export_map[tid] = tpl.export_name
+            materialized.append(tid)
+
+        _rebuild_registry(generated_dir, ensure_components=export_map)
+
+    return {"materialized": materialized}

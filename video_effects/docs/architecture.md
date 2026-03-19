@@ -90,6 +90,13 @@ Three Temporal workflows coordinate the work:
                 │            │     │  plan     │       │
                 │            │     └─────┬─────┘       │
                 │            │           │             │
+                │            │     ┌─────┴─────┐       │
+                │            │     │  Place    │       │
+                │            │     │  library  │       │
+                │            │     │  templates│       │
+                │            │     │  (LLM)   │       │
+                │            │     └─────┬─────┘       │
+                │            │           │             │
                 │            ├───────────┘             │
                 │            │                         │
                 │            ▼                         │
@@ -133,8 +140,9 @@ Three Temporal workflows coordinate the work:
 | LLM Helper | `helpers/llm.py` | `call_structured()`, `call_text()`, `load_prompt()` |
 | Face Tracking | `helpers/face_tracking.py` | MediaPipe detection + EMA smoothing |
 | Remotion Helpers | `helpers/remotion.py` | `render_media()`, `composite_overlay()` |
+| Template Helpers | `helpers/templates.py` | `render_template_section()` — shared template metadata formatter |
 
-### Activities (27 total)
+### Activities (38 total)
 
 | Group | Activities |
 |-------|-----------|
@@ -146,6 +154,7 @@ Three Temporal workflows coordinate the work:
 | Composition | `vfx_compose_final` |
 | Motion graphics | `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics` |
 | Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_plan_diagrams`, `vfx_plan_timelines`, `vfx_plan_quotes`, `vfx_plan_code_blocks`, `vfx_plan_comparisons`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry` |
+| Programmer | `vfx_programmer_brainstorm`, `vfx_programmer_critique`, `vfx_programmer_generate_code`, `vfx_place_library_templates` |
 | Creative | `vfx_design_style` |
 
 ### TypeScript Layer (Remotion)
@@ -186,7 +195,7 @@ Two streams run concurrently after approval:
 ### Stage 5: Composition (G7–G9)
 
 1. Mux processed video with original audio (G7)
-2. Merge infographic components into MG plan, re-validate, inject subtitles
+2. Merge infographic components into MG plan, place pinned library templates via LLM, re-validate, inject subtitles
 3. Render transparent overlay via Remotion ProRes 4444 (G8e)
 4. FFmpeg alpha-composite overlay onto base video (G9)
 

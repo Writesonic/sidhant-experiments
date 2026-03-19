@@ -61,6 +61,7 @@ video_effects/
 │   ├── creative.py             # Style design activity
 │   ├── remotion.py             # MG planning, spatial context, rendering
 │   ├── infographic.py          # Infographic code generation & validation
+│   ├── programmer.py          # Programmer brainstorm, critique, code-gen & template placement
 │   ├── compose.py              # Final audio mux
 │   ├── transcribe.py           # Audio transcription
 │   └── video_info.py           # Video metadata extraction
@@ -76,12 +77,15 @@ video_effects/
 ├── helpers/
 │   ├── llm.py                  # Anthropic API wrapper (call_structured, call_text)
 │   ├── face_tracking.py        # MediaPipe face detection pipeline
-│   └── remotion.py             # Remotion render + FFmpeg composite helpers
+│   ├── remotion.py             # Remotion render + FFmpeg composite helpers
+│   └── templates.py           # Shared template metadata renderer (render_template_section)
 ├── schemas/
 │   ├── effects.py              # EffectCue, EffectType, VideoInfo, effect params
 │   ├── styles.py               # StylePreset, StyleConfig, FontWeights
 │   ├── mg_templates.py         # MG template registry & specs
 │   ├── motion_graphics.py      # MotionGraphicsComponent, Plan
+│   ├── programmer.py          # ProgrammerComponentSpec, TemplatePlacement models
+│   ├── template_library.py    # User-created library template CRUD + conversion
 │   ├── infographic.py          # InfographicSpec, InfographicType, fallback map
 │   └── workflow.py             # VideoEffectsInput/Output
 ├── prompts/
@@ -95,6 +99,10 @@ video_effects/
 │   ├── plan_quotes.md          # Quote/callout planning prompt
 │   ├── plan_code_blocks.md     # Code block planning prompt
 │   ├── plan_comparisons.md     # Comparison planning prompt
+│   ├── programmer_brainstorm.md    # Programmer creative brainstorm prompt
+│   ├── programmer_critique.md      # Programmer self-critique prompt
+│   ├── programmer_generate_code.md # Programmer TSX code gen prompt
+│   ├── place_library_templates.md  # Context-aware library template placement prompt
 │   ├── generate_infographic_code.md  # TSX code generation prompt
 │   ├── infographic_api_reference.md  # Allowed imports for generated code
 │   ├── schema.py               # ParsedEffectCues response model

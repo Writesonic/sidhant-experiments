@@ -26,3 +26,22 @@ class ProgrammerPlanResponse(BaseModel):
     components: list[ProgrammerComponentSpec] = Field(
         description="List of proposed visual components — MUST contain at least one component"
     )
+
+
+class TemplatePlacement(BaseModel):
+    """Where and when to show a single library template."""
+
+    template_id: str = Field(description="Library template ID")
+    start_time: float = Field(description="When to show (seconds)")
+    end_time: float = Field(description="When to hide (seconds)")
+    bounds: dict = Field(description="Normalized {x, y, w, h}")
+    props: dict = Field(description="Filled props matching template's PropSpec")
+    anchor: str = Field("static", description="Anchor mode")
+    z_index: int = Field(10, description="Z-index tier")
+    rationale: str = Field(description="Why this moment/content")
+
+
+class TemplatePlacementResponse(BaseModel):
+    """LLM response for context-aware template placement."""
+
+    placements: list[TemplatePlacement]

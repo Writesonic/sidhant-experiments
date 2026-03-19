@@ -9,6 +9,7 @@ export async function startWorkflow(params: {
   style?: string;
   dev_mode?: boolean;
   enable_subtitles?: boolean;
+  pinned_templates?: string[];
 }): Promise<{ workflow_id: string }> {
   const res = await fetch(`${API_BASE}/api/workflows`, {
     method: "POST",
@@ -70,4 +71,87 @@ export async function signalWorkflow(
 
 export function fileUrl(path: string): string {
   return `${API_BASE}/api/files?path=${encodeURIComponent(path)}`;
+}
+
+// ── Template Library ──
+
+export interface LibraryTemplateMeta {
+  id: string;
+  display_name: string;
+  description: string;
+  tags: string[];
+  created_at: string;
+  export_name: string;
+  duration_range: [number, number];
+  tsx_code: string;
+}
+
+export interface LibraryTemplate extends LibraryTemplateMeta {
+  tsx_code: string;
+  props: { name: string; type: string; required: boolean; default?: unknown; description?: string }[];
+  spatial: { typical_y_range: [number, number]; typical_x_range: [number, number]; edge_aligned: boolean };
+  preview_image: string | null;
+}
+
+export interface CreateTemplateData {
+  id: string;
+  display_name: string;
+  description: string;
+  tsx_code: string;
+  export_name: string;
+  tags?: string[];
+}
+
+export interface GenerateCodeRequest {
+  prompt: string;
+  previous_code?: string;
+  conversation?: { role: string; content: string }[];
+  errors?: string[];
+}
+
+export async function listTemplates(): Promise<LibraryTemplateMeta[]> {
+  const res = await fetch(`${API_BASE}/api/templates`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getTemplate(id: string): Promise<LibraryTemplate> {
+  const res = await fetch(`${API_BASE}/api/templates/${id}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function saveTemplate(data: CreateTemplateData): Promise<LibraryTemplate> {
+  const res = await fetch(`${API_BASE}/api/templates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function updateTemplate(id: string, data: Partial<CreateTemplateData>): Promise<LibraryTemplate> {
+  const res = await fetch(`${API_BASE}/api/templates/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/templates/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function generateTemplateCode(req: GenerateCodeRequest): Promise<{ code: string; summary: string }> {
+  const res = await fetch(`${API_BASE}/api/templates/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }

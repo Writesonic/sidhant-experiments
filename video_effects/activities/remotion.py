@@ -13,12 +13,14 @@ from video_effects.helpers.llm import call_structured
 from video_effects.helpers.remotion import composite_overlay, render_media, render_still
 from video_effects.helpers.studio import start_studio, stop_studio, update_preview_plan, write_preview_assets
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
+from video_effects.helpers.templates import render_template_section
 from video_effects.schemas.mg_templates import (
     MGTemplateSpec,
     MG_TEMPLATE_REGISTRY,
     get_available_templates,
     load_guidance,
 )
+from video_effects.schemas import template_library
 from video_effects.schemas.motion_graphics import (
     EditMgPlanResponse,
     Z_TIER_FULLSCREEN,
@@ -37,43 +39,11 @@ _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
 def _render_template_section(spec: MGTemplateSpec) -> str:
-    """Format a single template's metadata + guidance into a markdown section."""
-    lines = [f"### {spec.name}", spec.description, ""]
+    """Format a single template's metadata + guidance into a markdown section.
 
-    # Props table
-    lines.append("| Prop | Type | Required | Default | Constraints |")
-    lines.append("|------|------|----------|---------|-------------|")
-    for p in spec.props:
-        constraints = ""
-        if p.choices:
-            constraints = " | ".join(p.choices)
-        elif p.min_value is not None or p.max_value is not None:
-            lo = p.min_value if p.min_value is not None else ""
-            hi = p.max_value if p.max_value is not None else ""
-            constraints = f"{lo}-{hi}"
-        lines.append(
-            f"| `{p.name}` | {p.type} | {'yes' if p.required else 'no'} "
-            f"| {p.default if p.default is not None else '-'} | {constraints} |"
-        )
-    lines.append("")
-
-    # Duration + spatial hints
-    lines.append(f"- **Duration**: {spec.duration_range[0]}-{spec.duration_range[1]} seconds")
-    sy = spec.spatial
-    lines.append(
-        f"- **Typical placement**: y {sy.typical_y_range[0]:.0%}-{sy.typical_y_range[1]:.0%}, "
-        f"x {sy.typical_x_range[0]:.0%}-{sy.typical_x_range[1]:.0%}"
-        + (" (edge-aligned)" if sy.edge_aligned else "")
-    )
-    lines.append("")
-
-    # Creative guidance
-    guidance = load_guidance(spec)
-    if guidance:
-        lines.append(guidance)
-        lines.append("")
-
-    return "\n".join(lines)
+    Delegates to the shared helper; kept as a private alias for internal call sites.
+    """
+    return render_template_section(spec)
 
 
 def _build_style_guide(style_config: dict | None, style_preset_name: str = "") -> str:
@@ -130,6 +100,15 @@ def build_mg_system_prompt(style_config: dict | None = None, style_preset_name: 
             parts.append(_render_template_section(spec))
         section = "\n".join(parts)
 
+    # Append user-created library templates
+    library_specs = template_library.list_as_mg_specs()
+    if library_specs:
+        parts = ["\n## Library Templates (user-created)\n"]
+        parts.append(f"You may also use these {len(library_specs)} library template(s).\n")
+        for spec in library_specs:
+            parts.append(_render_template_section(spec))
+        section += "\n".join(parts)
+
     return base.replace("{STYLE_GUIDE}", style_guide).replace("{TEMPLATES}", section)
 
 
@@ -150,6 +129,8 @@ def _validate_props(
     for comp in components:
         tpl_name = comp.get("template", "")
         spec = MG_TEMPLATE_REGISTRY.get(tpl_name)
+        if spec is None:
+            spec = template_library.get_as_mg_spec(tpl_name)
 
         if spec is None:
             issues.append(f"Dropped unknown template '{tpl_name}' — not in registry")

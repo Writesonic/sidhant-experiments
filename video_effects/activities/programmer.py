@@ -10,7 +10,9 @@ from temporalio import activity
 from video_effects.config import settings
 from video_effects.helpers.llm import call_structured, call_text, load_prompt
 from video_effects.helpers.remotion import _get_remotion_dir
-from video_effects.schemas.programmer import ProgrammerPlanResponse
+from video_effects.helpers.templates import render_template_section
+from video_effects.schemas.programmer import ProgrammerPlanResponse, TemplatePlacementResponse
+from video_effects.schemas import template_library
 
 logger = logging.getLogger(__name__)
 
@@ -330,3 +332,138 @@ def programmer_generate_code(input_data: dict) -> dict:
         "export_name": export_name,
         "props": props,
     }
+
+
+# ---------------------------------------------------------------------------
+# Library Template Placement
+# ---------------------------------------------------------------------------
+
+
+def _format_existing_components(components: list[dict]) -> str:
+    """Format existing components as time windows for the placement prompt."""
+    if not components:
+        return "No existing components.\n"
+    lines = []
+    for c in components:
+        tpl = c.get("template", c.get("id", "?"))
+        if "start_time" in c:
+            st, et = c["start_time"], c["end_time"]
+        elif "startFrame" in c:
+            fps = 30
+            st = c["startFrame"] / fps
+            et = (c["startFrame"] + c.get("durationInFrames", 1)) / fps
+        else:
+            continue
+        bounds = c.get("bounds", {})
+        lines.append(
+            f"- [{st:.1f}s - {et:.1f}s] {tpl} "
+            f"at ({bounds.get('x', 0):.2f}, {bounds.get('y', 0):.2f}, "
+            f"{bounds.get('w', 0):.2f}x{bounds.get('h', 0):.2f})"
+        )
+    return "\n".join(lines) + "\n" if lines else "No existing components.\n"
+
+
+def _validate_placement_props(placements: list[dict]) -> list[dict]:
+    """Validate and fix props for each placement against its template's PropSpec."""
+    validated = []
+    for p in placements:
+        tid = p.get("template_id", "")
+        tpl = template_library.get_template(tid)
+        if tpl is None:
+            logger.warning("Placement references unknown template '%s', skipping", tid)
+            continue
+
+        raw_props = p.get("props", {})
+        if not isinstance(raw_props, dict):
+            raw_props = {}
+        props = dict(raw_props)
+
+        skip = False
+        for spec in tpl.props:
+            if spec.name not in props:
+                if spec.required:
+                    logger.warning("[%s] Missing required prop '%s', skipping placement", tid, spec.name)
+                    skip = True
+                    break
+                if spec.default is not None:
+                    props[spec.name] = spec.default
+            else:
+                val = props[spec.name]
+                if spec.type in ("int", "float") and isinstance(val, (int, float)):
+                    if spec.min_value is not None and val < spec.min_value:
+                        val = spec.min_value
+                    if spec.max_value is not None and val > spec.max_value:
+                        val = spec.max_value
+                    if spec.type == "int":
+                        val = int(val)
+                    props[spec.name] = val
+                if spec.choices and val not in spec.choices:
+                    props[spec.name] = spec.default if spec.default is not None else spec.choices[0]
+
+        if skip:
+            continue
+
+        p["props"] = props
+        validated.append(p)
+
+    return validated
+
+
+@activity.defn(name="vfx_place_library_templates")
+def place_library_templates(input_data: dict) -> dict:
+    """Use LLM to place pinned library templates at content-relevant moments.
+
+    Input: {
+        "pinned_templates": list[dict],   # [{id, spatial, duration_range}, ...]
+        "spatial_context": dict,
+        "transcript": str,
+        "segments": list[dict],
+        "existing_components": list[dict],
+        "style_config": dict | None,
+        "video_info": dict,
+    }
+    Output: {"placements": list[dict]}
+    """
+    pinned = input_data["pinned_templates"]
+    style_config = input_data.get("style_config")
+
+    # Resolve each pinned template to its full spec
+    template_sections = []
+    for tpl_data in pinned:
+        tid = tpl_data["id"] if isinstance(tpl_data, dict) else tpl_data
+        tpl = template_library.get_template(tid)
+        if tpl is None:
+            logger.warning("Pinned template '%s' not found in library, skipping", tid)
+            continue
+        spec = template_library.as_mg_template_spec(tpl)
+        template_sections.append(render_template_section(spec))
+
+    if not template_sections:
+        return {"placements": []}
+
+    base_prompt = load_prompt("place_library_templates.md")
+    style_guide = _build_style_guide(style_config)
+    existing_text = _format_existing_components(input_data.get("existing_components", []))
+
+    system_prompt = (
+        base_prompt
+        .replace("{TEMPLATE_SECTIONS}", "\n".join(template_sections))
+        .replace("{EXISTING_COMPONENTS}", existing_text)
+        .replace("{STYLE_GUIDE}", style_guide)
+    )
+
+    user_message = _build_spatial_user_message(input_data)
+
+    activity.heartbeat("Placing library templates via LLM")
+
+    raw = call_structured(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        response_model=TemplatePlacementResponse,
+    )
+
+    placements = raw.get("placements", [])
+    placements = _validate_placement_props(placements)
+
+    logger.info("Placed %d library template(s)", len(placements))
+    return {"placements": placements}

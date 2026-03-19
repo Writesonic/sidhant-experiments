@@ -30,11 +30,13 @@ from .infographic import (
     generate_infographic_code,
     validate_infographic,
     build_generated_registry,
+    materialize_library_templates,
 )
 from .programmer import (
     programmer_brainstorm,
     programmer_critique,
     programmer_generate_code,
+    place_library_templates,
 )
 
 ALL_VIDEO_EFFECTS_ACTIVITIES = [
@@ -67,9 +69,11 @@ ALL_VIDEO_EFFECTS_ACTIVITIES = [
     generate_infographic_code,
     validate_infographic,
     build_generated_registry,
+    materialize_library_templates,
     programmer_brainstorm,
     programmer_critique,
     programmer_generate_code,
+    place_library_templates,
     edit_mg_plan,
     start_studio_activity,
     stop_studio_activity,

@@ -20,7 +20,11 @@ G8a: Build Spatial Context
   │      │
   │      ├──► Merge infographic components into MG plan
   │      │    Re-validate merged plan
-  │      │    Inject subtitles (zIndex=100)
+  │      │
+  │      ├──► Place pinned library templates (LLM)
+  │      │    Context-aware timing, props, positioning
+  │      │
+  │      ├──► Inject subtitles (zIndex=100)
   │      │
   │      ▼
   │    G8e: Render Overlay
@@ -35,10 +39,10 @@ G8a: Build Spatial Context
 ```
 
 **Key files:**
-- Activities: `activities/remotion.py`
-- Helpers: `helpers/remotion.py`
-- Schemas: `schemas/mg_templates.py`, `schemas/motion_graphics.py`
-- Prompts: `prompts/plan_motion_graphics_base.md`, `prompts/motion_graphics_schema.py`
+- Activities: `activities/remotion.py`, `activities/programmer.py` (template placement)
+- Helpers: `helpers/remotion.py`, `helpers/templates.py` (shared template renderer)
+- Schemas: `schemas/mg_templates.py`, `schemas/motion_graphics.py`, `schemas/programmer.py` (placement models)
+- Prompts: `prompts/plan_motion_graphics_base.md`, `prompts/place_library_templates.md`, `prompts/motion_graphics_schema.py`
 
 ## LLM Planning
 
@@ -169,6 +173,24 @@ ffmpeg -y -i base.mp4 -i overlay.mov \
 ## Subtitle Injection
 
 After the MG plan is finalized, word-level transcript segments are injected as a `subtitles` component with `zIndex=100` (renders above all other overlays). The Remotion [Subtitles component](remotion-components.md#subtitles) handles word-by-word highlighting.
+
+## Library Template Placement
+
+When the user pins library templates to a workflow, they are placed via `vfx_place_library_templates` — an LLM activity that runs in the main workflow (not inside ProgrammerWorkflow or InfographicGeneratorWorkflow).
+
+**Why main workflow?** Pinned templates need placement even when `enable_programmer` is false, and the activity needs ProgrammerWorkflow's output as input to avoid temporal conflicts.
+
+**Flow:**
+1. Resolve each pinned template ID → full `LibraryTemplate` → `MGTemplateSpec`
+2. Render template metadata into the prompt via `render_template_section()` (props table, duration, spatial hints)
+3. Build system prompt with template specs, existing component time windows, and style guide
+4. LLM returns `TemplatePlacementResponse` — per-template timing, bounds, filled props, rationale
+5. Validate props against each template's `PropSpec` (clamp ranges, apply defaults, validate choices)
+6. Convert to frame-domain components and inject into MG plan
+
+**Activity:** `vfx_place_library_templates` in `activities/programmer.py`
+**Prompt:** `prompts/place_library_templates.md`
+**Models:** `TemplatePlacement`, `TemplatePlacementResponse` in `schemas/programmer.py`
 
 ## Parallelization
 

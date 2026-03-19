@@ -4,6 +4,7 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from video_effects.schemas.mg_templates import MG_TEMPLATE_REGISTRY
     from video_effects.schemas.styles import get_style
     from video_effects.schemas.workflow import VideoEffectsInput, VideoEffectsOutput
 
@@ -227,7 +228,9 @@ class VideoEffectsWorkflow:
         enable_infographics = getattr(input, "enable_infographics", False) or input.enable_motion_graphics # TODO: Honestly I might just get rid of infographics and just use programmer.
         enable_programmer = getattr(input, "enable_programmer", False)
         has_transcript = bool(transcript_result.get("segments"))
-        if not effects and not enable_infographics and not enable_programmer and not has_transcript:
+        pinned_templates = getattr(input, "pinned_templates", []) or []
+        has_pinned = bool(pinned_templates)
+        if not effects and not enable_infographics and not enable_programmer and not has_transcript and not has_pinned:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=0,
@@ -241,7 +244,7 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=activity_timeout,
         )
 
-        if not render_plan.get("has_effects") and not enable_infographics and not enable_programmer and not has_transcript:
+        if not render_plan.get("has_effects") and not enable_infographics and not enable_programmer and not has_transcript and not has_pinned:
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=len(effects),
@@ -332,7 +335,11 @@ class VideoEffectsWorkflow:
             heartbeat_timeout=timedelta(minutes=2),
         )
 
-        apply_result, code_generation_result = await asyncio.gather(render_task, code_generation_task)
+        if code_generation_task is not None:
+            apply_result, code_generation_result = await asyncio.gather(render_task, code_generation_task)
+        else:
+            apply_result = await render_task
+            code_generation_result = None
 
         mg_plan = None
 
@@ -477,6 +484,77 @@ class VideoEffectsWorkflow:
                 len(subtitle_words), first_frame, last_frame,
             )
 
+        # ── Place pinned library templates (context-aware via LLM) ──
+        if pinned_templates:
+            existing_specs = []
+            if code_generation_result:
+                existing_specs.extend(code_generation_result.get("generated_components", []))
+                existing_specs.extend(code_generation_result.get("fallback_components", []))
+
+            placement_result = await workflow.execute_activity(
+                "vfx_place_library_templates",
+                {
+                    "pinned_templates": pinned_templates,
+                    "spatial_context": spatial_context,
+                    "transcript": transcript_result["transcript"],
+                    "segments": transcript_result["segments"],
+                    "existing_components": existing_specs + (mg_plan or {}).get("components", []),
+                    "style_config": style_config,
+                    "video_info": video_info,
+                },
+                start_to_close_timeout=activity_timeout,
+            )
+
+            placements = placement_result.get("placements", [])
+            if placements:
+                fps = int(video_info.get("fps", 30))
+                pinned_components = []
+                for p in placements:
+                    pinned_components.append({
+                        "template": p["template_id"],
+                        "startFrame": round(p["start_time"] * fps),
+                        "durationInFrames": max(1, round((p["end_time"] - p["start_time"]) * fps)),
+                        "props": p["props"],
+                        "bounds": p["bounds"],
+                        "zIndex": p.get("z_index", 10),
+                        "anchor": p.get("anchor", "static"),
+                    })
+
+                if mg_plan is None:
+                    mg_plan = {
+                        "components": [],
+                        "colorPalette": [],
+                        "includeBaseVideo": False,
+                        "faceDataPath": spatial_context.get("face_data_path", "") if spatial_context else "",
+                        "zoomStatePath": spatial_context.get("zoom_state_path", "") if spatial_context else "",
+                    }
+                    if style_config:
+                        mg_plan["styleConfig"] = style_config
+
+                mg_plan["components"].extend(pinned_components)
+                workflow.logger.info(
+                    "Placed %d pinned library template(s): %s",
+                    len(pinned_components),
+                    [c["template"] for c in pinned_components],
+                )
+
+        # ── Materialize library templates before preview ──
+        # Must happen before the approval gate so @remotion/player can render them
+        if mg_plan is not None and mg_plan.get("components"):
+            library_ids = [
+                c.get("template", "")
+                for c in mg_plan["components"]
+                if c.get("template", "") not in MG_TEMPLATE_REGISTRY
+                and c.get("template", "") != "subtitles"
+                and not c.get("template", "").startswith("vfx-")
+            ]
+            if library_ids:
+                await workflow.execute_activity(
+                    "vfx_materialize_library_templates",
+                    {"template_ids": library_ids},
+                    start_to_close_timeout=activity_timeout,
+                )
+
         # ── MG Approval Gate ──
         face_data_path = spatial_context.get("face_data_path", "") if spatial_context else ""
         zoom_state_path = spatial_context.get("zoom_state_path", "") if spatial_context else ""
@@ -540,6 +618,22 @@ class VideoEffectsWorkflow:
                             output_video="",
                             error=f"MG plan rejected {MAX_RETRIES} times, giving up",
                         )
+
+        # ── Re-materialize library templates before render (catches edits during approval) ──
+        if mg_plan is not None and mg_plan.get("components"):
+            library_ids = [
+                c.get("template", "")
+                for c in mg_plan["components"]
+                if c.get("template", "") not in MG_TEMPLATE_REGISTRY
+                and c.get("template", "") != "subtitles"
+                and not c.get("template", "").startswith("vfx-")
+            ]
+            if library_ids:
+                await workflow.execute_activity(
+                    "vfx_materialize_library_templates",
+                    {"template_ids": library_ids},
+                    start_to_close_timeout=activity_timeout,
+                )
 
         # ── G8e + G9: Render overlay + composite (needs base video + approved plan) ──
         self._workflow_stage = "rendering"

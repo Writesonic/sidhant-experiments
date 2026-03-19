@@ -13,6 +13,7 @@ class VideoEffectsInput(BaseModel):
     enable_infographics: bool = Field(False, description="Enable LLM-generated infographic overlays")
     enable_programmer: bool = Field(False, description="Enable free-hand creative programmer workflow")
     enable_subtitles: bool = Field(False, description="Enable subtitle overlay from transcript")
+    pinned_templates: list[dict] = Field(default_factory=list, description="Resolved library templates to include in MG plan (id, spatial, duration_range)")
 
 
 class VideoEffectsOutput(BaseModel):

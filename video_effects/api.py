@@ -19,6 +19,13 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 
 from video_effects.config import settings
 from video_effects.schemas.workflow import VideoEffectsInput
+from video_effects.schemas.template_library import (
+    LibraryTemplate,
+    list_templates as _list_templates,
+    get_template as _get_template,
+    save_template as _save_template,
+    delete_template as _delete_template,
+)
 
 app = FastAPI(title="VFX Studio API")
 
@@ -56,6 +63,18 @@ async def start_workflow(body: dict[str, Any]) -> dict:
     base = video_path.rsplit(".", 1)[0]
     output_path = f"{base}_effects.mp4"
 
+    pinned_ids = body.get("pinned_templates", [])
+    resolved_pinned: list[dict] = []
+    for tid in pinned_ids:
+        tpl = _get_template(tid)
+        if tpl:
+            resolved_pinned.append({
+                "id": tpl.id,
+                "display_name": tpl.display_name,
+                "spatial": tpl.spatial.model_dump(),
+                "duration_range": list(tpl.duration_range),
+            })
+
     input_data = VideoEffectsInput(
         input_video=video_path,
         output_video=output_path,
@@ -66,6 +85,7 @@ async def start_workflow(body: dict[str, Any]) -> dict:
         enable_infographics=body.get("enable_mg", False),
         enable_programmer=body.get("enable_programmer", False),
         enable_subtitles=body.get("enable_subtitles", False),
+        pinned_templates=resolved_pinned,
     )
 
     workflow_id = f"vfx-web-{uuid.uuid4().hex[:8]}"
@@ -151,6 +171,124 @@ async def signal_workflow(workflow_id: str, body: dict[str, Any]) -> dict:
         raise HTTPException(500, f"Signal failed: {e}")
 
     return {"ok": True}
+
+
+# ── Template Library CRUD ──
+
+
+@app.get("/api/templates")
+async def list_templates_endpoint() -> list[dict]:
+    templates = _list_templates()
+    return [
+        {
+            "id": t.id,
+            "display_name": t.display_name,
+            "description": t.description,
+            "tags": t.tags,
+            "created_at": t.created_at,
+            "export_name": t.export_name,
+            "duration_range": t.duration_range,
+            "tsx_code": t.tsx_code,
+        }
+        for t in templates
+    ]
+
+
+@app.get("/api/templates/{template_id}")
+async def get_template_endpoint(template_id: str) -> dict:
+    tpl = _get_template(template_id)
+    if tpl is None:
+        raise HTTPException(404, f"Template not found: {template_id}")
+    return tpl.model_dump()
+
+
+@app.post("/api/templates")
+async def create_template_endpoint(body: dict[str, Any]) -> dict:
+    tpl = LibraryTemplate(**body)
+    saved = _save_template(tpl)
+    return saved.model_dump()
+
+
+@app.put("/api/templates/{template_id}")
+async def update_template_endpoint(template_id: str, body: dict[str, Any]) -> dict:
+    existing = _get_template(template_id)
+    if existing is None:
+        raise HTTPException(404, f"Template not found: {template_id}")
+    updated_data = existing.model_dump()
+    updated_data.update(body)
+    updated_data["id"] = template_id
+    tpl = LibraryTemplate(**updated_data)
+    saved = _save_template(tpl)
+    return saved.model_dump()
+
+
+@app.delete("/api/templates/{template_id}")
+async def delete_template_endpoint(template_id: str) -> dict:
+    if not _delete_template(template_id):
+        raise HTTPException(404, f"Template not found: {template_id}")
+    return {"ok": True}
+
+
+@app.post("/api/templates/generate")
+async def generate_template_code(body: dict[str, Any]) -> dict:
+    from video_effects.helpers.llm import call_text, load_prompt
+    from video_effects.helpers.remotion import _get_remotion_dir
+
+    prompt_text = body.get("prompt", "")
+    previous_code = body.get("previous_code", "")
+    conversation = body.get("conversation", [])
+    errors = body.get("errors", [])
+
+    if not prompt_text:
+        raise HTTPException(400, "prompt is required")
+
+    base_prompt = load_prompt("generate_template.md")
+    api_reference = load_prompt("infographic_api_reference.md")
+
+    # Load real component examples
+    components_dir = _get_remotion_dir() / "src" / "components"
+    examples = []
+    for name in ("DataAnimation.tsx", "AnimatedTitle.tsx"):
+        path = components_dir / name
+        if path.exists():
+            examples.append(f"### Example: {name}\n\n```tsx\n{path.read_text()}\n```")
+    examples_section = "## Real Component Examples\n\n" + "\n\n".join(examples) if examples else ""
+
+    system_prompt = (
+        base_prompt
+        .replace("{API_REFERENCE}", f"## API Reference\n\n{api_reference}")
+        .replace("{EXAMPLES}", examples_section)
+    )
+
+    # Build user message
+    lines = [f"Create this component: {prompt_text}"]
+    if previous_code:
+        lines.append(f"\n## Previous Code\n\n```tsx\n{previous_code}\n```")
+    if errors:
+        lines.append("\n## Compilation Errors (fix these)\n")
+        for err in errors:
+            lines.append(f"- {err}")
+    if conversation:
+        lines.append("\n## Conversation History\n")
+        for msg in conversation[-6:]:
+            lines.append(f"**{msg.get('role', 'user')}**: {msg.get('content', '')}")
+
+    user_message = "\n".join(lines)
+
+    raw_code = call_text(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        model=settings.INFOGRAPHIC_LLM_MODEL,
+    )
+
+    # Strip markdown fencing if present
+    code = raw_code.strip()
+    if code.startswith("```"):
+        code = re.sub(r"^```\w*\n?", "", code)
+        code = re.sub(r"\n?```$", "", code)
+
+    summary = f"Generated component for: {prompt_text[:100]}"
+    return {"code": code, "summary": summary}
 
 
 # ── GET /api/files ──

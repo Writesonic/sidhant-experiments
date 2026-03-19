@@ -1,6 +1,6 @@
 # LLM Prompts
 
-The system uses Claude for five distinct tasks: effect cue parsing, style detection, motion graphics planning, infographic planning, and infographic code generation. All use structured output via tool-use except code generation which returns raw text.
+The system uses Claude for six distinct tasks: effect cue parsing, style detection, motion graphics planning, infographic planning, infographic code generation, and library template placement. All use structured output via tool-use except code generation which returns raw text.
 
 **Key files:**
 - LLM helper: `helpers/llm.py`
@@ -22,6 +22,10 @@ The system uses Claude for five distinct tasks: effect cue parsing, style detect
 | `prompts/plan_code_blocks.md` | Identify code snippet moments | `vfx_plan_code_blocks` | `InfographicPlanResponse` |
 | `prompts/plan_comparisons.md` | Identify comparison/versus moments | `vfx_plan_comparisons` | `InfographicPlanResponse` |
 | `prompts/generate_infographic_code.md` | Write TSX component code | `vfx_generate_infographic_code` | Raw text (TSX) |
+| `prompts/programmer_brainstorm.md` | Creative brainstorm for visual components | `vfx_programmer_brainstorm` | `ProgrammerPlanResponse` |
+| `prompts/programmer_critique.md` | Self-critique and filter proposals | `vfx_programmer_critique` | `ProgrammerPlanResponse` |
+| `prompts/programmer_generate_code.md` | Generate TSX for programmer components | `vfx_programmer_generate_code` | Raw text (TSX) |
+| `prompts/place_library_templates.md` | Context-aware placement of pinned library templates | `vfx_place_library_templates` | `TemplatePlacementResponse` |
 | `prompts/infographic_api_reference.md` | Allowed imports for generated code | (embedded in codegen prompt) | — |
 | `prompts/mg_guidance/animated_title.md` | Creative guidance for AnimatedTitle | (embedded in MG prompt) | — |
 | `prompts/mg_guidance/lower_third.md` | Creative guidance for LowerThird | (embedded in MG prompt) | — |
@@ -34,6 +38,7 @@ The system uses Claude for five distinct tasks: effect cue parsing, style detect
 |------|---------------|
 | `prompts/schema.py` | `ParsedEffectCues` (effects list + reasoning) |
 | `prompts/motion_graphics_schema.py` | `MGComponentBounds`, `MGComponentSpec`, `MotionGraphicsPlanResponse` |
+| `schemas/programmer.py` | `ProgrammerComponentSpec`, `ProgrammerPlanResponse`, `TemplatePlacement`, `TemplatePlacementResponse` |
 
 ## Prompt Loading
 
@@ -129,6 +134,26 @@ All category planners share the same structure: rules, data format, positioning 
 | `plan_quotes.md` | Key takeaways, citations, callouts | Genuinely impactful statements, max 3, 3–6s |
 | `plan_code_blocks.md` | Code snippets, commands | Specific code mentioned in transcript, max 3, 4–8s |
 | `plan_comparisons.md` | Side-by-side, A vs B, pros/cons | Clear two-sided structure, max 3, 4–8s |
+
+### place_library_templates.md
+
+**Purpose:** Context-aware placement of pinned library templates — find the best transcript moment, fill props with real content, position to avoid faces and existing components.
+
+**Dynamic sections:**
+- `{TEMPLATE_SECTIONS}` — rendered via `render_template_section()` from `helpers/templates.py` (prop table, duration range, spatial hints, creative guidance per template)
+- `{EXISTING_COMPONENTS}` — formatted time windows of already-generated components (from ProgrammerWorkflow + MG plan)
+- `{STYLE_GUIDE}` — palette and font from active style config
+
+**Key rules:**
+- Align template timing to relevant transcript moment
+- Fill ALL required props with real content extracted from transcript
+- Respect template's `duration_range` min/max
+- Avoid subtitle zone (y ≥ 0.78), maintain ≥2s gap from existing components
+- Face avoidance via spatial context
+
+**Activity:** `vfx_place_library_templates` in `activities/programmer.py`
+**Response model:** `TemplatePlacementResponse` (list of `TemplatePlacement`)
+**Post-LLM validation:** Props checked against each template's `PropSpec` — clamp ranges, apply defaults, validate choices
 
 ### generate_infographic_code.md
 

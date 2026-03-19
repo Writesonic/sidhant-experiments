@@ -43,6 +43,9 @@ class VideoEffectsSettings(BaseSettings):
     PROGRAMMER_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per component
     PROGRAMMER_LLM_MODEL: str = "claude-opus-4-6"  # Opus for creative code gen
 
+    # Template library
+    TEMPLATE_LIBRARY_PATH: str = "data/template_library.json"
+
     # API server
     API_PORT: int = 8000
     API_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
