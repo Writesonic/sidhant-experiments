@@ -121,7 +121,9 @@ Three Temporal workflows coordinate the work:
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| CLI | `cli.py` | Parse args, trigger workflow, interactive approval UI |
+| CLI | `cli.py` | Parse args, trigger workflow, CLI approval (auto-approve mode) |
+| API Server | `api.py` | FastAPI proxy: start workflows, poll status, signal approval, serve files |
+| Web UI | `app/` | Next.js + `@remotion/player` — browser-based preview and approval |
 | Worker | `worker.py` | Register workflows + activities, run Temporal worker |
 | Config | `config.py` | `VFX_*` environment variables via Pydantic BaseSettings |
 | Main Workflow | `workflow.py` | `VideoEffectsWorkflow` — orchestrates G1–G9 |
@@ -142,7 +144,7 @@ Three Temporal workflows coordinate the work:
 | Timeline | `vfx_validate_timeline` |
 | Render | `vfx_prepare_render`, `vfx_setup_processors`, `vfx_render_video` |
 | Composition | `vfx_compose_final` |
-| Motion graphics | `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics`, `vfx_preview_motion_graphics` |
+| Motion graphics | `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics` |
 | Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_plan_diagrams`, `vfx_plan_timelines`, `vfx_plan_quotes`, `vfx_plan_code_blocks`, `vfx_plan_comparisons`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry` |
 | Creative | `vfx_design_style` |
 
@@ -194,5 +196,5 @@ Two streams run concurrently after approval:
 - **Phase ordering**: Effects execute in strict numeric order (vignette → color → blur → whip → zoom → speed_ramp) to ensure correct composition.
 - **Transparent overlays**: MG rendered as ProRes 4444 with alpha, composited via FFmpeg `premultiply + overlay`. Keeps the OpenCV and Remotion pipelines fully decoupled.
 - **LLM-driven planning**: Effects, motion graphics, and infographics are all planned by LLMs analyzing the transcript — not by explicit user markup.
-- **Human-in-the-loop**: One approval gate (timeline) with feedback loop, skippable via `--auto-approve`.
+- **Human-in-the-loop**: Two approval gates (timeline + MG plan) with feedback loops, skippable via `--auto-approve`. The web UI uses `@remotion/player` for in-browser MG preview — no CLI preview rendering needed.
 - **Face awareness**: Face tracking data flows through the entire system — from zoom dampening in OpenCV to spatial layout hooks in Remotion components.

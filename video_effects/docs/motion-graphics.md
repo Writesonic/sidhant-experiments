@@ -4,6 +4,10 @@
 
 The Remotion motion graphics system adds animated overlays (titles, lower thirds, lists, data visualizations, subtitles) to the processed video. Overlays are now generated via the infographic code-gen pipeline with face-aware spatial validation.
 
+## Preview
+
+MG previews render in the browser via `@remotion/player` in the Next.js web UI (`app/src/components/MgApproval.tsx`). The Player imports `DynamicComposition` directly as a React component and passes the composition plan as props. Video and data files are served via HTTP from the FastAPI `/api/files` endpoint. No CLI preview rendering (`vfx_preview_motion_graphics`, `vfx_render_preview_clip`) is needed — these activities are skipped in the workflow.
+
 ## End-to-End Flow
 
 ```

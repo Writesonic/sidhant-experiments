@@ -1,6 +1,47 @@
-# CLI & Config
+# CLI, Web UI & Config
 
-## CLI Commands
+## Web UI (Primary)
+
+The web UI is a Next.js app that communicates with the workflow via a FastAPI proxy. MG previews render directly in the browser using `@remotion/player` — no CLI preview rendering needed.
+
+```bash
+# 1. Start the Temporal worker
+python -m video_effects.worker
+
+# 2. Start the API server (from repo root)
+uvicorn video_effects.api:app --port 8000 --reload
+
+# 3. Start the web UI
+cd video_effects/app && npm run dev
+
+# 4. Open http://localhost:3000
+```
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/workflows` | POST | Start workflow (`{video_path, enable_programmer, enable_mg, style, dev_mode}`) |
+| `/api/workflows/{id}` | GET | Get stage + stage-specific data (timeline, mg_plan, video_paths, result) |
+| `/api/workflows/{id}/signal` | POST | Send approval/rejection signal (`{signal, args}`) |
+| `/api/files` | GET | Stream local file by path (supports HTTP Range requests for video seeking) |
+
+### Workflow Signals & Queries
+
+| Signal | Args | Purpose |
+|--------|------|---------|
+| `approve_timeline` | `[bool, str]` | Approve/reject timeline with feedback |
+| `approve_mg` | `[bool, str]` | Approve/reject MG plan with feedback (prefix `[component:N]` for per-component edits) |
+
+| Query | Returns | Purpose |
+|-------|---------|---------|
+| `get_workflow_stage` | `str` | Current workflow stage |
+| `get_timeline` | `dict` | Current effect timeline |
+| `get_mg_plan` | `dict` | Current MG composition plan |
+| `get_video_info` | `dict` | Video metadata (fps, width, height, duration) |
+| `get_video_paths` | `dict` | Paths to base video, face data, zoom state |
+
+## CLI Commands (Alternative)
 
 **Entry point:** `python -m video_effects.cli run`
 
@@ -36,7 +77,7 @@ python -m video_effects.cli run demo.mp4 --dev
 
 ## Interactive Approval Flow
 
-When `--auto-approve` is not set, the CLI pauses at one gate:
+When `--auto-approve` is not set, the workflow pauses at two gates:
 
 ### 1. Timeline Approval
 
@@ -62,19 +103,11 @@ Approve timeline? [y/n/json]:
 
 Up to 5 rejection rounds. Feedback is passed back to the LLM for re-planning.
 
-### Workflow Signals
+### 2. MG Plan Approval
 
-The CLI communicates with the Temporal workflow via signals:
+After motion graphics components are generated (if `--mg` or `--programmer` is enabled), the workflow pauses for review. In the web UI, `@remotion/player` renders the full composition (base video + overlays) directly in the browser. Per-component edit and remove actions are available.
 
-| Signal | Args | Purpose |
-|--------|------|---------|
-| `approve_timeline` | `(bool, str)` | Approved flag + feedback text |
-
-And queries for displaying current state:
-
-| Query | Returns | Purpose |
-|-------|---------|---------|
-| `get_timeline` | `dict` | Current effect timeline |
+Up to 5 rejection rounds. Feedback prefixed with `[component:N]` targets a specific component.
 
 ## Configuration
 
@@ -122,6 +155,14 @@ All settings are loaded via Pydantic `BaseSettings` with `VFX_` prefix. Set them
 |----------|---------|-------------|
 | `VFX_INFOGRAPHIC_MAX_RETRIES` | `3` | Max code-gen + validate attempts |
 
+#### API Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VFX_API_PORT` | `8000` | API server port |
+| `VFX_API_CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed CORS origins |
+| `VFX_ALLOWED_FILE_DIRS` | `["/tmp/video_effects", ...]` | Directories the `/api/files` endpoint can serve |
+
 #### Misc
 
 | Variable | Default | Description |
@@ -168,6 +209,7 @@ enable_motion_graphics: bool
 style: str
 dev_mode: bool
 enable_infographics: bool
+enable_programmer: bool
 ```
 
 ### Output (`VideoEffectsOutput`)
