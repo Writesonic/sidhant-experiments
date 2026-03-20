@@ -107,7 +107,7 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
   }));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {baseVideoPath && (
         <Card className="p-0 overflow-hidden">
           <video
@@ -119,7 +119,7 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         </Card>
       )}
 
-      <div className="relative h-12 bg-surface overflow-hidden">
+      <div className="relative h-16 bg-surface overflow-hidden">
         {effects.map((e, i) => {
           const left = (e.start_time / safeDuration) * 100;
           const width = ((e.end_time - e.start_time) / safeDuration) * 100;
@@ -151,7 +151,7 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         ))}
       </div>
 
-      <div className="max-h-[300px] overflow-y-auto space-y-1">
+      <div className="space-y-1">
         {effects.map((e, i) => {
           const params = effectParamSummary(e);
           const confidencePct = Math.round(e.confidence * 100);
@@ -172,11 +172,14 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
 
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-text truncate">{e.verbal_cue}</p>
-                <div className="mt-1 h-1 bg-border-card w-full">
+                <div className="mt-1 h-1.5 bg-border-card w-full relative group">
                   <div
-                    className="h-1 bg-accent/60"
+                    className="h-1.5 bg-accent/60"
                     style={{ width: `${confidencePct}%` }}
                   />
+                  <span className="absolute -top-5 right-0 text-[10px] text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                    {confidencePct}%
+                  </span>
                 </div>
               </div>
 
@@ -190,9 +193,15 @@ export function TimelineApproval({ workflowId, timeline, baseVideoPath }: Props)
         })}
       </div>
 
-      <p className="text-sm text-text-muted">
-        {effects.length} effect{effects.length !== 1 ? "s" : ""} | {timeline.conflicts_resolved} conflict{timeline.conflicts_resolved !== 1 ? "s" : ""} resolved
-      </p>
+      <div className="border-t border-border pt-4 flex items-center gap-3">
+        <span className="text-sm text-text-muted">
+          {effects.length} effect{effects.length !== 1 ? "s" : ""}
+        </span>
+        <span className="text-text-ghost">|</span>
+        <span className="text-sm text-text-muted">
+          {timeline.conflicts_resolved} conflict{timeline.conflicts_resolved !== 1 ? "s" : ""} resolved
+        </span>
+      </div>
 
       <ActionBar
         onApprove={handleApprove}

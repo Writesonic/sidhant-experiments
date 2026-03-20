@@ -3,7 +3,6 @@
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { startWorkflow, listTemplates, type LibraryTemplateMeta } from "@/lib/api";
-import { Card } from "@/components/ui";
 
 export default function Home() {
   const router = useRouter();
@@ -45,140 +44,151 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center animate-slide-up">
-      <Card className="p-8 w-full max-w-lg">
-        <div className="mb-6">
-          <h1 className="text-4xl font-display font-[800] tracking-[-0.02em]">Sidhant's Epic Video Effects Studio</h1>
-          <p className="text-text-secondary text-sm mt-1">
-            Professional video effects workflow
-          </p>
+    <div className="max-w-xl mx-auto pt-12 animate-slide-up">
+      <div className="mb-8">
+        <h1 className="text-[clamp(28px,4vw,42px)] font-display font-[800] tracking-[-0.02em] leading-[1.1]">
+          VFX Studio
+        </h1>
+        <p className="text-text-secondary text-sm mt-2">
+          Professional video effects workflow
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div>
+          <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">
+            Video path
+          </label>
+          <input
+            type="text"
+            value={videoPath}
+            onChange={(e) => setVideoPath(e.target.value)}
+            placeholder="/path/to/video.mp4"
+            required
+            className="w-full bg-surface border border-border-card h-11 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
+          />
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-1">
-              Video path
+        <div>
+          <span className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Options</span>
+          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+            <label className="flex items-center gap-2 min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={programmer}
+                onChange={(e) => setProgrammer(e.target.checked)}
+                className="accent-accent"
+              />
+              Programmer
             </label>
-            <input
-              type="text"
-              value={videoPath}
-              onChange={(e) => setVideoPath(e.target.value)}
-              placeholder="/path/to/video.mp4"
-              required
-              className="w-full bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
-          </div>
-
-          <div>
-            <span className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Options</span>
-            <div className="flex gap-6 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={programmer}
-                  onChange={(e) => setProgrammer(e.target.checked)}
-                  className="accent-accent"
-                />
-                Programmer
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={mg}
-                  onChange={(e) => setMg(e.target.checked)}
-                  className="accent-accent"
-                />
-                Motion Graphics
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={subtitles}
-                  onChange={(e) => setSubtitles(e.target.checked)}
-                  className="accent-accent"
-                />
-                Subtitles
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={devMode}
-                  onChange={(e) => setDevMode(e.target.checked)}
-                  className="accent-accent"
-                />
-                Dev mode
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-1">
-              Style (optional)
+            <label className="flex items-center gap-2 min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={mg}
+                onChange={(e) => setMg(e.target.checked)}
+                className="accent-accent"
+              />
+              Motion Graphics
             </label>
-            <input
-              type="text"
-              value={style}
-              onChange={(e) => setStyle(e.target.value)}
-              placeholder="e.g. bold, minimal"
-              className="w-full bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
+            <label className="flex items-center gap-2 min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={subtitles}
+                onChange={(e) => setSubtitles(e.target.checked)}
+                className="accent-accent"
+              />
+              Subtitles
+            </label>
+            <label className="flex items-center gap-2 min-h-[44px]">
+              <input
+                type="checkbox"
+                checked={devMode}
+                onChange={(e) => setDevMode(e.target.checked)}
+                className="accent-accent"
+              />
+              Dev mode
+            </label>
           </div>
+        </div>
 
-          {libraryTemplates.length > 0 && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowPinning(!showPinning)}
-                className="text-sm text-text-dim hover:text-text transition-colors"
-              >
-                {showPinning ? "Hide" : "Pin"} library templates ({pinnedTemplates.size}/{libraryTemplates.length})
-              </button>
-              {showPinning && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {libraryTemplates.map((t) => {
-                    const pinned = pinnedTemplates.has(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => {
-                          setPinnedTemplates((prev) => {
-                            const next = new Set(prev);
-                            if (pinned) next.delete(t.id);
-                            else next.add(t.id);
-                            return next;
-                          });
-                        }}
-                        className={`px-3 py-1 text-xs font-medium border transition-colors ${
-                          pinned
-                            ? "bg-accent-fill border-accent-dim text-accent"
-                            : "bg-surface border-border-card text-text-dim hover:text-text"
-                        }`}
-                      >
-                        {t.display_name}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+        <div>
+          <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">
+            Style (optional)
+          </label>
+          <input
+            type="text"
+            value={style}
+            onChange={(e) => setStyle(e.target.value)}
+            placeholder="e.g. bold, minimal"
+            className="w-full bg-surface border border-border-card h-11 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
+          />
+        </div>
+
+        {libraryTemplates.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowPinning(!showPinning)}
+              className="px-4 py-2 text-sm border border-border-card text-text-dim hover:text-text hover:border-accent/40 transition-colors"
+            >
+              {showPinning ? "Hide" : "Pin"} library templates ({pinnedTemplates.size}/{libraryTemplates.length})
+            </button>
+            {showPinning && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {libraryTemplates.map((t) => {
+                  const pinned = pinnedTemplates.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        setPinnedTemplates((prev) => {
+                          const next = new Set(prev);
+                          if (pinned) next.delete(t.id);
+                          else next.add(t.id);
+                          return next;
+                        });
+                      }}
+                      className={`px-4 py-2 text-xs font-medium border transition-colors ${
+                        pinned
+                          ? "bg-accent-fill border-accent-dim text-accent"
+                          : "bg-surface border-border-card text-text-dim hover:text-text"
+                      }`}
+                    >
+                      {t.display_name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-negative-fill border border-negative-border p-4 text-negative text-sm">
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-accent hover:bg-accent/90 active:scale-[0.98] disabled:bg-border-card text-bg h-11 px-4 text-base font-semibold transition-all flex items-center justify-center gap-2"
+        >
+          {loading && (
+            <span className="flex items-center gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="w-1.5 h-1.5 bg-bg animate-pulse"
+                  style={{ animationDelay: `${i * 150}ms` }}
+                />
+              ))}
+            </span>
           )}
-
-          {error && (
-            <div className="bg-negative-fill border border-negative-border p-3 text-negative text-sm">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg h-11 px-4 text-base font-semibold transition-colors"
-          >
-            {loading ? "Starting..." : "Start Workflow"}
-          </button>
-        </form>
-      </Card>
+          {loading ? "Starting..." : "Start Workflow"}
+        </button>
+      </form>
     </div>
   );
 }

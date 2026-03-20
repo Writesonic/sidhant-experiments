@@ -1,84 +1,19 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Player } from "@remotion/player";
-import { generateTemplateCode, saveTemplate } from "@/lib/api";
-import { DynamicCodeComp } from "@/components/DynamicCodeComp";
-import { compileComponent } from "@/lib/compiler";
-import { Card } from "@/components/ui";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+import Link from "next/link";
+import { saveTemplate } from "@/lib/api";
+import { useTemplateEditor } from "@/hooks/useTemplateEditor";
+import { TemplateEditor } from "@/components/TemplateEditor";
 
 export default function CreateTemplatePage() {
   const router = useRouter();
-  const [code, setCode] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [chat, setChat] = useState<ChatMessage[]>([]);
-  const [compileError, setCompileError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const editor = useTemplateEditor();
 
-  // Save form
-  const [displayName, setDisplayName] = useState("");
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
-
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Recompile on code change (debounced)
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      if (!code.trim()) {
-        setCompileError(null);
-        return;
-      }
-      const { error } = compileComponent(code);
-      setCompileError(error);
-    }, 500);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [code]);
-
-  // Scroll chat to bottom
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat]);
-
-  const handleGenerate = useCallback(async () => {
-    if (!prompt.trim() || generating) return;
-    setGenerating(true);
-
-    const userMsg = prompt.trim();
-    setChat((prev) => [...prev, { role: "user", content: userMsg }]);
-    setPrompt("");
-
-    try {
-      const result = await generateTemplateCode({
-        prompt: userMsg,
-        previous_code: code || undefined,
-        conversation: chat.map((m) => ({ role: m.role, content: m.content })),
-        errors: compileError ? [compileError] : undefined,
-      });
-      setCode(result.code);
-      setChat((prev) => [...prev, { role: "assistant", content: result.summary }]);
-    } catch (err) {
-      setChat((prev) => [
-        ...prev,
-        { role: "assistant", content: `Error: ${err instanceof Error ? err.message : String(err)}` },
-      ]);
-    } finally {
-      setGenerating(false);
-    }
-  }, [prompt, code, chat, compileError, generating]);
-
-  const handleSave = useCallback(async () => {
+  const onSave = useCallback(() => {
+    const { code, displayName, description, tags } = editor;
     if (!displayName.trim() || !code.trim()) return;
-    setSaving(true);
 
     const id = displayName
       .trim()
@@ -89,7 +24,7 @@ export default function CreateTemplatePage() {
     const exportMatch = code.match(/export\s+const\s+(\w+)/);
     const exportName = exportMatch ? exportMatch[1] : "CustomComponent";
 
-    try {
+    editor.handleSave(async () => {
       await saveTemplate({
         id,
         display_name: displayName.trim(),
@@ -99,145 +34,24 @@ export default function CreateTemplatePage() {
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
       });
       router.push("/templates");
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }, [displayName, description, tags, code, router]);
-
-  // Memoize the component for the Player to avoid remounts
-  const PreviewComponent = useMemo(() => {
-    const Comp: React.FC<{ code: string }> = (props) => <DynamicCodeComp code={props.code} />;
-    return Comp;
-  }, []);
+    });
+  }, [editor, router]);
 
   return (
     <div className="animate-slide-up">
-      <h1 className="text-2xl font-display font-bold tracking-tight mb-6">Create Template</h1>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left column: Chat + Editor */}
-        <div className="flex flex-col gap-4">
-          {/* Chat history */}
-          <Card className="p-4 max-h-48 overflow-y-auto">
-            {chat.length === 0 ? (
-              <p className="text-text-muted text-sm">
-                Describe a motion graphics component to generate...
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {chat.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`text-sm ${msg.role === "user" ? "text-accent" : "text-text-secondary"}`}
-                  >
-                    <span className="font-medium text-text-muted mr-2">
-                      {msg.role === "user" ? "You:" : "AI:"}
-                    </span>
-                    {msg.content}
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-            )}
-          </Card>
-
-          {/* Prompt input */}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
-              placeholder={code ? "Edit: e.g. make it bouncier..." : "Describe your component..."}
-              className="flex-1 bg-surface border border-border-card h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
-            <button
-              onClick={handleGenerate}
-              disabled={generating || !prompt.trim()}
-              className="px-4 h-10 bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg text-sm font-semibold transition-colors"
-            >
-              {generating ? "..." : code ? "Edit" : "Generate"}
-            </button>
-          </div>
-
-          {/* Code editor */}
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="// Generated code will appear here, or paste your own TSX..."
-            spellCheck={false}
-            className="w-full h-72 bg-bg border border-border-card p-3 font-mono text-xs text-text resize-y focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-          />
-
-          {/* Compilation errors */}
-          {compileError && (
-            <div className="bg-negative-fill border border-negative-border p-3 text-negative text-xs font-mono whitespace-pre-wrap">
-              {compileError}
-            </div>
-          )}
-
-          {/* Save panel */}
-          <Card className="p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-text-secondary">Save to Library</h3>
-            <input
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Display name"
-              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description"
-              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
-            <input
-              type="text"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="Tags (comma-separated)"
-              className="w-full bg-surface border border-border-card h-9 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-            />
-            <button
-              onClick={handleSave}
-              disabled={saving || !displayName.trim() || !code.trim()}
-              className="w-full bg-accent hover:bg-accent/90 disabled:bg-border-card text-bg h-10 text-sm font-semibold transition-colors"
-            >
-              {saving ? "Saving..." : "Save to Library"}
-            </button>
-          </Card>
-        </div>
-
-        {/* Right column: Live preview */}
-        <div className="flex flex-col gap-4">
-          <Card className="p-4">
-            <h3 className="text-sm font-semibold text-text-secondary mb-3">Live Preview</h3>
-            <div className="overflow-hidden bg-black aspect-video">
-              {code.trim() ? (
-                <Player
-                  component={PreviewComponent}
-                  inputProps={{ code }}
-                  durationInFrames={150}
-                  fps={30}
-                  compositionWidth={1920}
-                  compositionHeight={1080}
-                  style={{ width: "100%" }}
-                  controls
-                  loop
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-text-ghost text-sm">
-                  Preview will appear here
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-      </div>
+      <Link href="/templates" className="text-sm text-text-dim hover:text-text transition-colors">
+        &larr; Gallery
+      </Link>
+      <h1 className="text-2xl font-display font-bold tracking-tight mt-3 mb-6">Create Template</h1>
+      <TemplateEditor
+        editor={editor}
+        onSave={onSave}
+        saveLabel="Save to Library"
+        emptyPreviewText="Describe a component to begin"
+        promptPlaceholder="Describe your component..."
+        generateLabel="Generate"
+        codePlaceholder="// Generated code will appear here, or paste your own TSX..."
+      />
     </div>
   );
 }

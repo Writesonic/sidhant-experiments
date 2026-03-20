@@ -18,35 +18,44 @@ export default function WorkflowPage({
 
   if (error && !data) {
     return (
-      <Card className="border-negative-border p-6">
-        <p className="text-negative text-sm">Failed to connect: {error}</p>
-        <Link href="/" className="text-sm text-text-dim hover:text-text mt-4 inline-block">
-          Try Again
-        </Link>
-      </Card>
+      <div className="space-y-6">
+        <Card className="border-negative-border p-6">
+          <p className="text-negative text-sm">Failed to connect: {error}</p>
+          <Link
+            href="/"
+            className="inline-block mt-6 px-4 py-2.5 border border-border-card text-text-dim hover:text-text hover:border-accent/40 text-sm font-medium transition-colors"
+          >
+            Try Again
+          </Link>
+        </Card>
+      </div>
     );
   }
 
   if (!data) {
-    return <ActivityIndicator stage="Connecting" description="Reaching workflow server..." />;
+    return (
+      <Card className="p-8">
+        <ActivityIndicator stage="Connecting" description="Reaching workflow server..." />
+      </Card>
+    );
   }
 
   const { stage } = data;
 
   if (stage === "init" || stage === "analyzing") {
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
-        <div className="animate-slide-up">
+        <Card className="p-8 animate-slide-up">
           <ActivityIndicator stage="Analyzing" description="Extracting video metadata, transcribing audio..." />
-        </div>
-      </>
+        </Card>
+      </div>
     );
   }
 
   if (stage === "timeline_approval" && data.timeline) {
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up">
           <TimelineApproval
@@ -55,7 +64,7 @@ export default function WorkflowPage({
             baseVideoPath={data.video_paths?.base_video}
           />
         </div>
-      </>
+      </div>
     );
   }
 
@@ -65,7 +74,7 @@ export default function WorkflowPage({
       : "Building motion graphics composition...";
     const label = stage === "processing" ? "Processing" : "Preparing preview";
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up space-y-6">
           {data.video_paths?.base_video && (
@@ -78,15 +87,17 @@ export default function WorkflowPage({
               />
             </Card>
           )}
-          <ActivityIndicator stage={label} description={desc} />
+          <Card className="p-8">
+            <ActivityIndicator stage={label} description={desc} />
+          </Card>
         </div>
-      </>
+      </div>
     );
   }
 
   if (stage === "mg_approval" && data.mg_plan && data.video_info && data.video_paths) {
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up">
           <MgApproval
@@ -96,13 +107,13 @@ export default function WorkflowPage({
             videoPaths={data.video_paths}
           />
         </div>
-      </>
+      </div>
     );
   }
 
   if (stage === "rendering") {
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up space-y-6">
           {data.video_paths?.base_video && (
@@ -115,19 +126,21 @@ export default function WorkflowPage({
               />
             </Card>
           )}
-          <ActivityIndicator stage="Rendering" description="Encoding final video with all overlays..." />
+          <Card className="p-8">
+            <ActivityIndicator stage="Rendering" description="Encoding final video with all overlays..." />
+          </Card>
         </div>
-      </>
+      </div>
     );
   }
 
   if (stage === "done" && data.result) {
     const r = data.result;
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Stat value={String(r.effects_applied)} label="Effects applied" />
             <Stat value={String(r.motion_graphics_applied)} label="Motion graphics" />
             {r.transcript_length != null && (
@@ -137,43 +150,49 @@ export default function WorkflowPage({
               <Stat value={String(r.phases)} label="Phases" />
             )}
           </div>
-          <Card>
+          <Card className="p-5">
             <p className="text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Output path</p>
             <code className="text-sm text-text break-all">{String(r.output_video)}</code>
           </Card>
-          <Link href="/" className="text-sm text-text-dim hover:text-text inline-block">
+          <Link
+            href="/"
+            className="inline-block mt-2 px-4 py-2.5 border border-border-card text-text-dim hover:text-text hover:border-accent/40 text-sm font-medium transition-colors"
+          >
             Start New
           </Link>
         </div>
-      </>
+      </div>
     );
   }
 
   if (stage === "error") {
     return (
-      <>
+      <div className="space-y-6">
         <StageIndicator currentStage={stage} />
         <div className="animate-slide-up">
           <Card className="border-negative-border p-6">
-            <pre className="overflow-x-auto"><code className="text-sm text-negative">{data.error ?? "Unknown error"}</code></pre>
-            <Link href="/" className="text-sm text-text-dim hover:text-text mt-4 inline-block">
+            <pre className="overflow-x-auto max-h-60 overflow-y-auto"><code className="text-sm text-negative">{data.error ?? "Unknown error"}</code></pre>
+            <Link
+              href="/"
+              className="inline-block mt-6 px-4 py-2.5 border border-border-card text-text-dim hover:text-text hover:border-accent/40 text-sm font-medium transition-colors"
+            >
               Try Again
             </Link>
           </Card>
         </div>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <StageIndicator currentStage={stage} />
-      <div className="animate-slide-up">
+      <Card className="p-8 animate-slide-up">
         <ActivityIndicator
           stage={stage.charAt(0).toUpperCase() + stage.slice(1)}
           description="Processing..."
         />
-      </div>
-    </>
+      </Card>
+    </div>
   );
 }

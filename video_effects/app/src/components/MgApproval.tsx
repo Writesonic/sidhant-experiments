@@ -72,6 +72,7 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
     index?: number;
     template?: string;
   } | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
 
   const fps = videoInfo.fps ?? 30;
   const width = videoInfo.width ?? 1920;
@@ -108,6 +109,7 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
 
   async function handleRemove(index: number) {
     setSending(true);
+    setConfirmRemove(null);
     await signalWorkflow(workflowId, "approve_mg", [
       false,
       `[component:${index}] Remove this component entirely`,
@@ -150,70 +152,94 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
       )}
 
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold">
+        <h3 className="text-lg font-display font-bold">
           Components ({cards.length})
         </h3>
-        {cards.map((card) => (
-          <Card
-            key={card.index}
-            className={`relative border-l-2 ${borderClass(card.template)} px-4 py-3`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <Badge label={card.template} type={card.template} />
-                  <span className="text-sm font-mono text-text-secondary">
-                    {card.timeRange}
-                  </span>
-                </div>
-                {card.propsSummary && (
-                  <div className="text-xs text-text-dim">{card.propsSummary}</div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3">
-                {card.bounds && (
-                  <div
-                    className="relative bg-surface"
-                    style={{ width: 60, height: 34 }}
-                  >
-                    <div
-                      className={`absolute ${fillClass(card.template)}`}
-                      style={{
-                        left: `${card.bounds.x * 100}%`,
-                        top: `${card.bounds.y * 100}%`,
-                        width: `${card.bounds.w * 100}%`,
-                        height: `${card.bounds.h * 100}%`,
-                      }}
-                    />
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() =>
-                      setFeedbackTarget({
-                        type: "component",
-                        index: card.index,
-                        template: card.template,
-                      })
-                    }
-                    disabled={sending}
-                    className="px-3 py-1 text-xs border border-border-card text-text-dim hover:bg-surface-warm transition-colors disabled:opacity-40"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleRemove(card.index)}
-                    disabled={sending}
-                    className="px-3 py-1 text-xs border border-negative-border text-negative hover:bg-negative-fill transition-colors disabled:opacity-40"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            </div>
+        {cards.length === 0 ? (
+          <Card className="p-8 text-center">
+            <p className="text-text-dim text-sm">No non-subtitle components in this plan</p>
           </Card>
-        ))}
+        ) : (
+          cards.map((card) => (
+            <Card
+              key={card.index}
+              className={`relative border-l-2 ${borderClass(card.template)} px-4 py-3`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Badge label={card.template} type={card.template} />
+                    <span className="text-sm font-mono text-text-secondary">
+                      {card.timeRange}
+                    </span>
+                  </div>
+                  {card.propsSummary && (
+                    <div className="text-xs text-text-dim">{card.propsSummary}</div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {card.bounds && (
+                    <div
+                      className="relative bg-surface"
+                      style={{ width: 80, height: 45 }}
+                    >
+                      <div
+                        className={`absolute ${fillClass(card.template)}`}
+                        style={{
+                          left: `${card.bounds.x * 100}%`,
+                          top: `${card.bounds.y * 100}%`,
+                          width: `${card.bounds.w * 100}%`,
+                          height: `${card.bounds.h * 100}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        setFeedbackTarget({
+                          type: "component",
+                          index: card.index,
+                          template: card.template,
+                        })
+                      }
+                      disabled={sending}
+                      className="px-4 py-2.5 text-xs border border-border-card text-text-dim hover:bg-surface-warm transition-colors disabled:opacity-40"
+                    >
+                      Suggest Edit
+                    </button>
+                    {confirmRemove === card.index ? (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleRemove(card.index)}
+                          disabled={sending}
+                          className="px-3 py-2.5 text-xs bg-negative/20 border border-negative-border text-negative font-medium transition-colors disabled:opacity-40"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmRemove(null)}
+                          className="px-3 py-2.5 text-xs border border-border-card text-text-dim transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmRemove(card.index)}
+                        disabled={sending}
+                        className="px-4 py-2.5 text-xs border border-negative-border text-negative hover:bg-negative-fill transition-colors disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))
+        )}
       </div>
 
       <ActionBar
@@ -228,7 +254,7 @@ export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props)
         <FeedbackDialog
           title={
             feedbackTarget.type === "component"
-              ? `Edit: ${feedbackTarget.template}`
+              ? `Suggest Edit: ${feedbackTarget.template}`
               : "MG Plan Feedback"
           }
           onSubmit={handleReject}

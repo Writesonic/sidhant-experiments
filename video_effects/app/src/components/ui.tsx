@@ -41,13 +41,13 @@ export function StageIndicator({ currentStage }: { currentStage: WorkflowStage }
   const currentIdx = STAGE_MAP[currentStage] ?? 0;
 
   return (
-    <div className="flex items-center gap-0 w-full">
+    <div className="flex items-center gap-0 w-full mb-6">
       {STAGES.map((name, i) => {
         const completed = i < currentIdx;
         const active = i === currentIdx;
         return (
           <React.Fragment key={name}>
-            <div className="flex flex-col items-center gap-1">
+            <div className="flex flex-col items-center gap-1 shrink-0">
               <div className="relative flex items-center justify-center w-6 h-6">
                 {completed ? (
                   <div className="w-6 h-6 bg-accent/20 border border-accent/60 flex items-center justify-center">
@@ -63,12 +63,12 @@ export function StageIndicator({ currentStage }: { currentStage: WorkflowStage }
                   <div className="w-6 h-6 bg-surface border border-border-card" />
                 )}
               </div>
-              <span className={`text-[10px] uppercase tracking-[0.15em] font-mono leading-none ${active ? "text-accent font-medium" : completed ? "text-accent/80" : "text-text-dim"}`}>
+              <span className={`text-[10px] uppercase tracking-[0.15em] font-mono leading-none hidden sm:block ${active ? "text-accent font-medium" : completed ? "text-accent/80" : "text-text-dim"}`}>
                 {name}
               </span>
             </div>
             {i < STAGES.length - 1 && (
-              <div className={`flex-1 h-px mx-1 mb-4 ${i < currentIdx ? "bg-accent/40" : "bg-border-card"}`} />
+              <div className={`flex-1 h-px mx-1 ${i < currentIdx ? "bg-accent/40" : "bg-border-card"}`} />
             )}
           </React.Fragment>
         );
@@ -77,9 +77,24 @@ export function StageIndicator({ currentStage }: { currentStage: WorkflowStage }
   );
 }
 
-export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
+export function Card({
+  children,
+  className,
+  interactive = false,
+  onClick,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  interactive?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <div className={`bg-surface border border-border-card transition-all duration-200 ${className ?? ""}`}>
+    <div
+      onClick={onClick}
+      className={`bg-surface border border-border-card transition-all duration-200 ${
+        interactive ? "cursor-pointer hover:border-accent/60 hover:bg-[#131313]" : ""
+      } ${className ?? ""}`}
+    >
       {children}
     </div>
   );
@@ -103,14 +118,14 @@ export function ActionBar({
       <button
         onClick={onApprove}
         disabled={disabled}
-        className="px-5 py-2 bg-accent hover:bg-accent/90 text-bg font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="px-5 py-2.5 bg-accent hover:bg-accent/90 active:scale-[0.98] text-bg font-medium text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {approveLabel}
       </button>
       <button
         onClick={onReject}
         disabled={disabled}
-        className="px-5 py-2 border border-negative-border text-negative hover:bg-negative-fill font-medium text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="px-5 py-2.5 border border-negative-border text-negative hover:bg-negative-fill active:scale-[0.98] font-medium text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {rejectLabel}
       </button>
@@ -127,9 +142,17 @@ export function Stat({ value, label }: { value: string | number; label: string }
   );
 }
 
-export function ActivityIndicator({ stage, description }: { stage: string; description?: string }) {
+export function ActivityIndicator({
+  stage,
+  description,
+  align = "center",
+}: {
+  stage: string;
+  description?: string;
+  align?: "center" | "start";
+}) {
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className={`flex flex-col gap-3 ${align === "center" ? "items-center" : "items-start"}`}>
       <div className="flex items-center gap-1.5">
         {[0, 1, 2].map((i) => (
           <div
