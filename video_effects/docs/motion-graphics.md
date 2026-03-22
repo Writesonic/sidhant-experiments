@@ -128,7 +128,7 @@ No convergence loop needed — each component is placed once and becomes a fixed
 - `_rect_overlap_fraction(a, b)` — Overlap as fraction of rect a's area
 - `_compute_free_rects(frame, obstacles)` — Maximal free rectangles after subtracting obstacles (bin-packing split)
 - `_find_best_free_placement(comp_w, comp_h, free_rects, original_pos)` — Picks closest fitting free rect, shrinks preserving aspect ratio if needed
-- `_resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues)` — Single-pass z_index-ordered placement with obstacle accumulation
+- `_resolve_all_conflicts(components, face_windows, edge_aligned_templates, issues, static_obstacles=None, safe_frame=None, zoom_effects=None)` — Single-pass z_index-ordered placement with obstacle accumulation
 - `_compute_zoom_stable_window(zoom_cue)` — Returns time range where zoom is stable:
   - Bounce: 25%–75% of duration
   - In: 60%–end

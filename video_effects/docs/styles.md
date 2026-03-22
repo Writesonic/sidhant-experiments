@@ -23,7 +23,8 @@ Elegant, restrained. Best for educational content, interviews, thoughtful pacing
 | Animations | fade, slide-in |
 | Density | Sparse: 3–4 overlays / 60s |
 | Color grading | warm @ 0.3 |
-| Avoids | whip, speed_ramp |
+| Avoided effects | whip, speed_ramp |
+| Avoided animations | bounce, pop |
 
 ### bold-energy
 High-impact. Best for hype videos, sports, high-energy speakers.
@@ -36,7 +37,8 @@ High-impact. Best for hype videos, sports, high-energy speakers.
 | Animations | bounce, pop |
 | Density | High: 6–10 overlays / 60s |
 | Color grading | dramatic @ 0.6 |
-| Prefers | whip, speed_ramp |
+| Preferred effects | whip, speed_ramp |
+| Avoided animations | fade |
 
 ### tech-sleek
 Modern tech aesthetic. Best for tech reviews, tutorials, product demos.
@@ -49,7 +51,8 @@ Modern tech aesthetic. Best for tech reviews, tutorials, product demos.
 | Animations | slide-in |
 | Density | Moderate: 4–6 overlays / 60s |
 | Color grading | cool @ 0.3 |
-| Prefers | whip, vignette |
+| Preferred effects | whip, vignette |
+| Avoided animations | bounce |
 
 ### casual-vlog
 Friendly and warm. Best for vlogs, casual conversations, behind-the-scenes.
@@ -62,7 +65,7 @@ Friendly and warm. Best for vlogs, casual conversations, behind-the-scenes.
 | Animations | typewriter, slide-in |
 | Density | Sparse: 3–5 overlays / 60s |
 | Color grading | warm @ 0.5 |
-| Prefers | vignette |
+| Preferred effects | vignette |
 
 ### podcast-pro
 Clean interview style. Best for podcast clips, interviews, panel discussions.
@@ -76,7 +79,8 @@ Clean interview style. Best for podcast clips, interviews, panel discussions.
 | Density | Very sparse: 2–3 overlays / 60s |
 | Color grading | none (0.0) |
 | Template preference | lower_third |
-| Avoids | whip, speed_ramp |
+| Avoided effects | whip, speed_ramp |
+| Avoided animations | bounce, pop |
 
 ### tiktok-native
 Short-form social. Best for TikTok/Reels/Shorts, fast-paced content.
@@ -89,7 +93,7 @@ Short-form social. Best for TikTok/Reels/Shorts, fast-paced content.
 | Animations | pop, bounce |
 | Density | High: 6–10 overlays / 60s |
 | Color grading | dramatic @ 0.4 |
-| Prefers | whip, speed_ramp |
+| Preferred effects | whip, speed_ramp |
 
 ### default
 Balanced fallback when no style is specified and auto-detection isn't used.
@@ -207,3 +211,4 @@ Style influences the pipeline at multiple stages:
 3. **MG planning (G8b):** Style guide section dynamically injected into prompt (preferred/avoided animations, density targets, template preferences, color palette)
 4. **Remotion rendering (G8e):** `StyleConfig` passed as `CompositionPlan` prop, available to all components via `useStyle()`
 5. **Infographic code generation:** Style config provided to LLM for palette/font consistency
+6. **Programmer code generation:** Style config provided to LLM for palette/font consistency in brainstorm and code-gen prompts

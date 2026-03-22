@@ -21,10 +21,16 @@ cd video_effects/app && npm run dev
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/workflows` | POST | Start workflow (`{video_path, enable_programmer, enable_mg, style, dev_mode}`) |
+| `/api/workflows` | POST | Start workflow (`{video_path, enable_programmer, enable_mg, style, dev_mode, enable_subtitles, pinned_templates}`) |
 | `/api/workflows/{id}` | GET | Get stage + stage-specific data (timeline, mg_plan, video_paths, result) |
 | `/api/workflows/{id}/signal` | POST | Send approval/rejection signal (`{signal, args}`) |
 | `/api/files` | GET | Stream local file by path (supports HTTP Range requests for video seeking) |
+| `/api/templates` | GET | List all library templates |
+| `/api/templates` | POST | Create a new library template |
+| `/api/templates/{id}` | GET | Get a single library template |
+| `/api/templates/{id}` | PUT | Update a library template |
+| `/api/templates/{id}` | DELETE | Delete a library template |
+| `/api/templates/generate` | POST | Generate template code via LLM |
 
 ### Workflow Signals & Queries
 
@@ -40,6 +46,7 @@ cd video_effects/app && npm run dev
 | `get_mg_plan` | `dict` | Current MG composition plan |
 | `get_video_info` | `dict` | Video metadata (fps, width, height, duration) |
 | `get_video_paths` | `dict` | Paths to base video, face data, zoom state |
+| `get_mg_preview` | `dict \| None` | MG preview data for browser rendering |
 
 ## CLI Commands (Alternative)
 
@@ -58,6 +65,8 @@ python -m video_effects.cli run <input_video> [OPTIONS]
 | `--style` | `-s` | choice | auto-detect | Style preset name (see [Styles](styles.md)) |
 | `--dev` | — | flag | False | Dev mode: effects from explicit verbal commands |
 | `--infographics` | — | flag | False | Enable LLM-generated infographic overlays (same as `--mg`) |
+| `--programmer` | — | flag | False | Enable free-hand creative programmer workflow |
+| `--subtitles` | — | flag | False | Enable subtitle overlay from transcript |
 
 ### Examples
 
@@ -132,7 +141,8 @@ All settings are loaded via Pydantic `BaseSettings` with `VFX_` prefix. Set them
 |----------|---------|-------------|
 | `VFX_ANTHROPIC_API_KEY` | `None` | Claude API key |
 | `VFX_LLM_MODEL` | `claude-sonnet-4-6` | Model for most LLM tasks |
-| `VFX_INFOGRAPHIC_LLM_MODEL` | `claude-opus-4-6` | Model for code generation |
+| `VFX_SMALL_LLM_MODEL` | `claude-haiku-4-5` | Lightweight model for simple tasks |
+| `VFX_INFOGRAPHIC_LLM_MODEL` | `claude-opus-4-6` | Model for infographic code generation |
 
 #### Face Tracking
 
@@ -154,6 +164,19 @@ All settings are loaded via Pydantic `BaseSettings` with `VFX_` prefix. Set them
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VFX_INFOGRAPHIC_MAX_RETRIES` | `3` | Max code-gen + validate attempts |
+
+#### Programmer
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VFX_PROGRAMMER_LLM_MODEL` | `claude-opus-4-6` | Model for programmer code generation |
+| `VFX_PROGRAMMER_MAX_RETRIES` | `3` | Max code-gen + validate attempts |
+
+#### Template Library
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VFX_TEMPLATE_LIBRARY_PATH` | `data/template_library.json` | Path to template library JSON |
 
 #### API Server
 
@@ -192,6 +215,7 @@ python -m video_effects.worker
 | `VideoEffectsWorkflow` | Main pipeline (G1–G9) |
 | `CreativeDesignerWorkflow` | Auto-style detection |
 | `InfographicGeneratorWorkflow` | Code generation (A0–A4) |
+| `ProgrammerWorkflow` | Free-hand creative component generation |
 
 ### Registered Activities
 
@@ -210,6 +234,8 @@ style: str
 dev_mode: bool
 enable_infographics: bool
 enable_programmer: bool
+enable_subtitles: bool
+pinned_templates: list[dict]
 ```
 
 ### Output (`VideoEffectsOutput`)

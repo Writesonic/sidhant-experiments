@@ -11,6 +11,7 @@ Three Temporal workflows coordinate the work:
 | `VideoEffectsWorkflow` | Main orchestrator (G1–G9) |
 | `CreativeDesignerWorkflow` | Auto-detect style preset from transcript |
 | `InfographicGeneratorWorkflow` | LLM-generated TSX components (A0–A4) |
+| `ProgrammerWorkflow` | Free-hand creative component generation |
 
 ## End-to-End Data Flow
 
@@ -136,13 +137,15 @@ Three Temporal workflows coordinate the work:
 | Main Workflow | `workflow.py` | `VideoEffectsWorkflow` — orchestrates G1–G9 |
 | Creative Workflow | `creative_workflow.py` | Auto-style detection child workflow |
 | Infographic Workflow | `infographic_workflow.py` | Code-gen child workflow (A0–A4) |
+| Programmer Workflow | `programmer_workflow.py` | Free-hand creative component generation |
 | Effect Registry | `effect_registry.py` | Phase ordering, `EffectType` → processor map |
 | LLM Helper | `helpers/llm.py` | `call_structured()`, `call_text()`, `load_prompt()` |
 | Face Tracking | `helpers/face_tracking.py` | MediaPipe detection + EMA smoothing |
 | Remotion Helpers | `helpers/remotion.py` | `render_media()`, `composite_overlay()` |
 | Template Helpers | `helpers/templates.py` | `render_template_section()` — shared template metadata formatter |
+| Studio Helper | `helpers/studio.py` | Remotion Studio process lifecycle management |
 
-### Activities (38 total)
+### Activities (40 total)
 
 | Group | Activities |
 |-------|-----------|
@@ -152,9 +155,10 @@ Three Temporal workflows coordinate the work:
 | Timeline | `vfx_validate_timeline` |
 | Render | `vfx_prepare_render`, `vfx_setup_processors`, `vfx_render_video` |
 | Composition | `vfx_compose_final` |
-| Motion graphics | `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics` |
-| Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_plan_diagrams`, `vfx_plan_timelines`, `vfx_plan_quotes`, `vfx_plan_code_blocks`, `vfx_plan_comparisons`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry` |
+| Motion graphics | `vfx_detect_faces`, `vfx_build_remotion_context`, `vfx_plan_motion_graphics`, `vfx_validate_merged_plan`, `vfx_load_composition_plan`, `vfx_render_motion_overlay`, `vfx_composite_motion_graphics`, `vfx_edit_mg_plan`, `vfx_preview_motion_graphics`, `vfx_render_preview_clip` |
+| Infographics | `vfx_cleanup_generated`, `vfx_plan_infographics`, `vfx_plan_diagrams`, `vfx_plan_timelines`, `vfx_plan_quotes`, `vfx_plan_code_blocks`, `vfx_plan_comparisons`, `vfx_generate_infographic_code`, `vfx_validate_infographic`, `vfx_build_generated_registry`, `vfx_materialize_library_templates` |
 | Programmer | `vfx_programmer_brainstorm`, `vfx_programmer_critique`, `vfx_programmer_generate_code`, `vfx_place_library_templates` |
+| Studio | `vfx_start_studio`, `vfx_stop_studio`, `vfx_update_studio_preview` |
 | Creative | `vfx_design_style` |
 
 ### TypeScript Layer (Remotion)
@@ -170,6 +174,7 @@ Three Temporal workflows coordinate the work:
 | Style Context | `remotion/src/lib/styles.ts` | `StyleProvider`, `useStyle()` |
 | Face Context | `remotion/src/lib/context.ts` | `FaceDataProvider`, `useFaceFrame()` |
 | Zoom Context | `remotion/src/lib/zoom-context.ts` | `ZoomDataProvider`, `useZoomFrame()` |
+| Easing | `remotion/src/lib/easing.ts` | Spring configs (GENTLE, BOUNCY, SNAPPY, SMOOTH, ELASTIC, WOBBLY) |
 
 ## Pipeline Stages
 

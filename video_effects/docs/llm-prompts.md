@@ -26,6 +26,9 @@ The system uses Claude for six distinct tasks: effect cue parsing, style detecti
 | `prompts/programmer_critique.md` | Self-critique and filter proposals | `vfx_programmer_critique` | `ProgrammerPlanResponse` |
 | `prompts/programmer_generate_code.md` | Generate TSX for programmer components | `vfx_programmer_generate_code` | Raw text (TSX) |
 | `prompts/place_library_templates.md` | Context-aware placement of pinned library templates | `vfx_place_library_templates` | `TemplatePlacementResponse` |
+| `prompts/summarize_transcript.md` | Summarize transcript for context | — | — |
+| `prompts/edit_mg_plan.md` | Edit MG plan based on rejection feedback | `vfx_edit_mg_plan` | `EditMgPlanResponse` |
+| `prompts/generate_template.md` | LLM-driven template code generation | `POST /api/templates/generate` | Raw text (TSX) |
 | `prompts/infographic_api_reference.md` | Allowed imports for generated code | (embedded in codegen prompt) | — |
 | `prompts/mg_guidance/animated_title.md` | Creative guidance for AnimatedTitle | (embedded in MG prompt) | — |
 | `prompts/mg_guidance/lower_third.md` | Creative guidance for LowerThird | (embedded in MG prompt) | — |
@@ -38,6 +41,9 @@ The system uses Claude for six distinct tasks: effect cue parsing, style detecti
 |------|---------------|
 | `prompts/schema.py` | `ParsedEffectCues` (effects list + reasoning) |
 | `prompts/motion_graphics_schema.py` | `MGComponentBounds`, `MGComponentSpec`, `MotionGraphicsPlanResponse` |
+| `schemas/infographic.py` | `InfographicSpec`, `InfographicPlanResponse`, `CodeGenResponse`, `ValidationResult`, `FALLBACK_MAP` |
+| `schemas/motion_graphics.py` | `EditMgPlanResponse`, `MotionGraphicsComponent`, Z-tier constants |
+| `schemas/template_library.py` | `LibraryTemplate`, `TemplateLibrary` |
 | `schemas/programmer.py` | `ProgrammerComponentSpec`, `ProgrammerPlanResponse`, `TemplatePlacement`, `TemplatePlacementResponse` |
 
 ## Prompt Loading
@@ -70,7 +76,7 @@ If the LLM doesn't return a tool_use block, raises `ValueError("LLM did not retu
 
 **Function:** `call_text(system_prompt, user_message, model)`
 
-Used only for infographic code generation (A2). Returns raw string response.
+Used for infographic code generation (A2), programmer code generation, and template generation API. Returns raw string response.
 
 Max tokens: 8192. Markdown fencing is stripped from the response.
 
@@ -81,7 +87,9 @@ Max tokens: 8192. Markdown fencing is stripped from the response.
 | Setting | Default | Used For |
 |---------|---------|----------|
 | `VFX_LLM_MODEL` | `claude-sonnet-4-6` | Effect parsing, style detection, MG planning, infographic planning |
+| `VFX_SMALL_LLM_MODEL` | `claude-haiku-4-5` | Lightweight tasks |
 | `VFX_INFOGRAPHIC_LLM_MODEL` | `claude-opus-4-6` | Infographic code generation (higher quality for code) |
+| `VFX_PROGRAMMER_LLM_MODEL` | `claude-opus-4-6` | Programmer workflow code generation |
 
 ## Prompt Details
 
@@ -221,11 +229,12 @@ LLM generates TSX → Validate (tsc + render)
 
 ## HITL Approval Flow
 
-One approval gate in the main workflow, controlled by signals:
+Two approval gates in the main workflow, controlled by signals:
 
 | Signal | Triggered By | Max Retries |
 |--------|-------------|-------------|
-| `approve_timeline(bool, feedback)` | CLI after displaying effect table | 5 |
+| `approve_timeline(bool, feedback)` | CLI/web UI after displaying effect table | 5 |
+| `approve_mg(bool, feedback)` | CLI/web UI after MG plan preview | 5 |
 
 Skippable via `--auto-approve` CLI flag (sets `VideoEffectsInput.auto_approve = True`).
 

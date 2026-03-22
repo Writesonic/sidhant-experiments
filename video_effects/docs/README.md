@@ -54,6 +54,7 @@ video_effects/
 ├── workflow.py                 # Main VideoEffectsWorkflow
 ├── creative_workflow.py        # Style auto-detection child workflow
 ├── infographic_workflow.py     # Code-gen child workflow
+├── programmer_workflow.py     # Free-hand creative programmer child workflow
 ├── effect_registry.py          # Phase ordering & effect type → processor map
 ├── activities/
 │   ├── apply_effects.py        # Single-pass frame pipeline
@@ -72,13 +73,13 @@ video_effects/
 │   ├── color.py                # Color grading presets
 │   ├── whip.py                 # Whip transition
 │   ├── vignette.py             # Cinematic vignette
-│   ├── speed_ramp.py           # Visual speed effect
-│   └── subtitle.py             # Text burn-in (legacy)
+│   └── speed_ramp.py           # Visual speed effect
 ├── helpers/
 │   ├── llm.py                  # Anthropic API wrapper (call_structured, call_text)
 │   ├── face_tracking.py        # MediaPipe face detection pipeline
 │   ├── remotion.py             # Remotion render + FFmpeg composite helpers
-│   └── templates.py           # Shared template metadata renderer (render_template_section)
+│   ├── templates.py           # Shared template metadata renderer (render_template_section)
+│   └── studio.py              # Remotion Studio process lifecycle management
 ├── schemas/
 │   ├── effects.py              # EffectCue, EffectType, VideoInfo, effect params
 │   ├── styles.py               # StylePreset, StyleConfig, FontWeights
@@ -103,6 +104,9 @@ video_effects/
 │   ├── programmer_critique.md      # Programmer self-critique prompt
 │   ├── programmer_generate_code.md # Programmer TSX code gen prompt
 │   ├── place_library_templates.md  # Context-aware library template placement prompt
+│   ├── summarize_transcript.md     # Transcript summarization prompt
+│   ├── edit_mg_plan.md             # MG plan editing on rejection feedback
+│   ├── generate_template.md        # LLM-driven template code generation
 │   ├── generate_infographic_code.md  # TSX code generation prompt
 │   ├── infographic_api_reference.md  # Allowed imports for generated code
 │   ├── schema.py               # ParsedEffectCues response model
@@ -114,22 +118,34 @@ video_effects/
 │       └── data_animation.md
 ├── app/                        # Next.js web UI (preview + approval)
 │   ├── package.json            # Next.js 16 + @remotion/player 4.0.242
-│   ├── next.config.ts          # Webpack alias: @remotion-project → ../remotion/src
+│   ├── next.config.ts          # Webpack + Turbopack alias: @remotion-project → ../remotion/src
 │   └── src/
 │       ├── app/
 │       │   ├── layout.tsx      # Root layout
 │       │   ├── page.tsx        # Landing page (start workflow form)
-│       │   └── workflow/[id]/
-│       │       └── page.tsx    # Stage-aware workflow viewer
+│       │   ├── workflow/[id]/
+│       │   │   └── page.tsx    # Stage-aware workflow viewer
+│       │   └── templates/
+│       │       ├── page.tsx        # Template library browser
+│       │       ├── create/
+│       │       │   └── page.tsx    # Create new template
+│       │       └── [id]/
+│       │           └── page.tsx    # Edit template
 │       ├── components/
 │       │   ├── VideoPlayer.tsx     # @remotion/player wrapper
 │       │   ├── TimelineApproval.tsx # Effects timeline + approve/reject
 │       │   ├── MgApproval.tsx      # Player preview + component cards
-│       │   └── FeedbackDialog.tsx  # Rejection feedback modal
+│       │   ├── FeedbackDialog.tsx  # Rejection feedback modal
+│       │   ├── DynamicCodeComp.tsx # Live code component renderer
+│       │   ├── NavLink.tsx        # Navigation link component
+│       │   ├── TemplateEditor.tsx # Template editing UI
+│       │   └── ui.tsx             # Shared UI primitives
 │       ├── hooks/
-│       │   └── useWorkflow.ts  # Polls /api/workflows/{id}
+│       │   ├── useWorkflow.ts      # Polls /api/workflows/{id}
+│       │   └── useTemplateEditor.ts # Template editor state management
 │       └── lib/
-│           └── api.ts          # Typed fetch wrappers for Python API
+│           ├── api.ts          # Typed fetch wrappers for Python API
+│           └── compiler.ts     # TypeScript compilation utilities
 └── remotion/                   # TypeScript/React Remotion project
     ├── package.json            # Remotion 4.0.242 + React 18
     └── src/
@@ -150,7 +166,7 @@ video_effects/
             ├── styles.ts       # StyleProvider, useStyle
             ├── context.ts      # FaceDataProvider, useFaceFrame
             ├── zoom-context.ts # ZoomDataProvider, useZoomFrame
-            ├── easing.ts       # Spring configs (GENTLE, BOUNCY, SNAPPY, SMOOTH)
+            ├── easing.ts       # Spring configs (GENTLE, BOUNCY, SNAPPY, SMOOTH, ELASTIC, WOBBLY)
             ├── fonts.ts        # Google Fonts loader
             ├── infographic-utils.ts  # SVG math helpers
             └── component-utils.ts    # Diagram, timeline, code block utilities

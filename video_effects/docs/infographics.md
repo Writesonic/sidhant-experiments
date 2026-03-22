@@ -43,6 +43,11 @@ Merge: concat all specs, sort by score desc, take top 6
  ▼
 A4: Build Generated Registry
     Write _registry.ts with all successful components
+ │
+ ▼
+A5: Materialize Library Templates
+    Write pinned library template TSX to generated/
+    Rebuild registry
 ```
 
 **Key files:**
@@ -158,7 +163,7 @@ From `../../lib/spatial`: `useFaceAwareLayout`
 
 From `../../lib/styles`: `useStyle`
 
-From `../../lib/easing`: `SPRING_GENTLE`, `SPRING_BOUNCY`, `SPRING_SNAPPY`, `SPRING_SMOOTH`
+From `../../lib/easing`: `SPRING_GENTLE`, `SPRING_BOUNCY`, `SPRING_SNAPPY`, `SPRING_SMOOTH`, `SPRING_ELASTIC`, `SPRING_WOBBLY`, `elasticSpring`, `wobblySpring`
 
 From `../../lib/infographic-utils`: `polarToCartesian`, `describeArc`, `generateTicks`, `linearScale`, `colorWithOpacity`, `lerpColor`
 
@@ -260,7 +265,7 @@ After the infographic workflow completes, its components are merged into the mai
 
 1. Generated components (frame-domain) are added directly
 2. Fallback components (template-based) are added with template registry lookup
-3. The merged plan is re-validated via `vfx_validate_merged_plan` (same 8-pass validation)
+3. The merged plan is re-validated via `vfx_validate_merged_plan` (spatial validation)
 4. Pinned library templates are placed via `vfx_place_library_templates` — an LLM activity that finds the best transcript moment, fills props, and positions to avoid faces and existing components. See [Motion Graphics](motion-graphics.md#library-template-placement).
 5. Subtitles are injected last (`zIndex: 100`)
 

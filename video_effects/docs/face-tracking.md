@@ -50,17 +50,25 @@ Default alpha: `VFX_SMOOTHING_ALPHA` (0.1). Returns int32 numpy array.
 
 ### Format
 
+Two writers produce this cache with different `dimensions` formats:
+
+**`effects/zoom.py`** (OpenCV zoom processing, G6b):
 ```json
 {
   "dimensions": [1920, 1080],
-  "face_data": [
-    [960, 540, 200, 250],
-    [962, 541, 201, 251]
-  ]
+  "face_data": [[960, 540, 200, 250], ...]
 }
 ```
 
-Each entry: `[center_x, center_y, face_width, face_height]` in pixel coordinates.
+**`activities/remotion.py`** (spatial context building, G8a):
+```json
+{
+  "dimensions": {"width": 1920, "height": 1080},
+  "face_data": [[960, 540, 200, 250], ...]
+}
+```
+
+Each `face_data` entry: `[center_x, center_y, face_width, face_height]` in pixel coordinates.
 
 ### Invalidation
 
@@ -69,7 +77,7 @@ Cache is rebuilt when:
 - Old list format (pre-dimensions tracking) is detected
 - Cache file is missing
 
-Validation in `zoom.py`:
+Validation in `zoom.py` (expects list format):
 ```python
 cached_dims = raw.get("dimensions")
 if cached_dims == [dec_w, dec_h]:
@@ -158,6 +166,7 @@ Each value: `[zoom_level, target_norm_x, target_norm_y]`.
     "opencv_effects": [...],
     "face_data_path": str,
     "zoom_state_path": str,
+    "subtitle_region": { "x", "y", "w", "h" } | None,
 }
 ```
 

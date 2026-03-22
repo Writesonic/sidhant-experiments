@@ -31,8 +31,9 @@ interface CompositionPlan {
 2. Wrap content in `StyleProvider` → `FaceDataProvider` → `ZoomDataProvider`
 3. Sort components by `zIndex`
 4. Look up each `comp.template` in `ComponentRegistry`
-5. Render: `<Sequence from={startFrame} durationInFrames={dur}><Component {...props} position={bounds} anchor={anchor} /></Sequence>`
-6. Transparent background (for ProRes 4444 alpha)
+5. Each component is wrapped in a `<div>` with `clipPath: inset(...)` clamped to its bounds rect, plus optional `filter: drop-shadow(...)` when `shadow` is set
+6. Render: `<Sequence from={startFrame} durationInFrames={dur}><Component {...props} position={bounds} anchor={anchor} /></Sequence>`
+7. Transparent background (for ProRes 4444 alpha)
 
 ### ComponentSpec Interface
 
@@ -45,6 +46,7 @@ interface ComponentSpec {
   bounds: NormalizedRect;        // {x, y, w, h} normalized 0-1
   zIndex: number;
   anchor?: AnchorMode;
+  shadow?: string;               // CSS drop-shadow value (e.g., "2px 2px 4px rgba(0,0,0,0.5)")
 }
 
 type AnchorMode = "static" | "face-right" | "face-left"
@@ -276,6 +278,10 @@ Returns `ZoomFrame` for the current frame:
 | `SPRING_BOUNCY` | 10 | 0.6 | 120 | Playful, overshoot |
 | `SPRING_SNAPPY` | 20 | 0.5 | 200 | Fast, crisp |
 | `SPRING_SMOOTH` | 200 | 1 | 100 | Very smooth, slow |
+| `SPRING_ELASTIC` | 5 | 0.4 | 300 | Elastic, springy |
+| `SPRING_WOBBLY` | 8 | 1.0 | 150 | Wobbly, playful |
+
+Helper functions: `elasticSpring(frame, fps)` and `wobblySpring(frame, fps)` return spring progress values using the corresponding configs.
 
 ### Common Patterns
 
