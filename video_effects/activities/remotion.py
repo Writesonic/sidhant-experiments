@@ -995,6 +995,7 @@ def _validate_plan(
     ]
 
     # 6. Zoom transition buffer — shift overlays away from zoom ease-in/ease-out
+    #    Break after any shift to prevent cascading through multiple zooms.
     for comp in components:
         for ze in zoom_effects:
             if comp["start_time"] >= ze.get("end_time", 0) or ze.get("start_time", 0) >= comp["end_time"]:
@@ -1002,6 +1003,13 @@ def _validate_plan(
             stable_start, stable_end = _compute_zoom_stable_window(ze)
             stable_dur = stable_end - stable_start
             comp_dur = comp["end_time"] - comp["start_time"]
+
+            # If component is entirely during transition (stable window too short), shift outside zoom
+            if stable_dur < 1.0 or comp_dur > stable_dur:
+                comp["start_time"] = ze.get("end_time", 0) + 0.1
+                comp["end_time"] = comp["start_time"] + comp_dur
+                issues.append(f"Shifted {comp['template']} past zoom (transition window too short)")
+                break  # Don't cascade into further zooms
 
             # If overlay starts during zoom transition, delay it to stable window
             if comp["start_time"] < stable_start and comp["end_time"] > stable_start:
@@ -1012,12 +1020,6 @@ def _validate_plan(
             if comp["end_time"] > stable_end and comp["start_time"] < stable_end:
                 comp["end_time"] = stable_end
                 issues.append(f"Trimmed {comp['template']} to avoid zoom transition")
-
-            # If component is entirely during transition (stable window too short), shift outside zoom
-            if stable_dur < 1.0 or comp_dur > stable_dur:
-                comp["start_time"] = ze.get("end_time", 0) + 0.1
-                comp["end_time"] = comp["start_time"] + comp_dur
-                issues.append(f"Shifted {comp['template']} past zoom (transition window too short)")
 
     # 7. Single-pass free-rectangle tiling (face + inter-component conflicts)
     # Use a subtitle-aware safe frame so tiling never relocates components

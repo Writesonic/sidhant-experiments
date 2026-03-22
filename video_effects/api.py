@@ -127,6 +127,11 @@ async def get_workflow_status(workflow_id: str) -> dict:
         # Always include video_paths so the UI can show the video at every stage
         result["video_paths"] = await _query(handle, "get_video_paths")
 
+        try:
+            result["steps"] = await _query(handle, "get_steps")
+        except Exception:
+            pass  # Backward compat with old workflows
+
         if stage == "timeline_approval":
             result["timeline"] = await _query(handle, "get_timeline")
 

@@ -7,6 +7,7 @@ import { TimelineApproval } from "@/components/TimelineApproval";
 import { MgApproval } from "@/components/MgApproval";
 import { fileUrl } from "@/lib/api";
 import { StageIndicator, ActivityIndicator, Stat, Card } from "@/components/ui";
+import { StepLog } from "@/components/StepLog";
 
 export default function WorkflowPage({
   params,
@@ -42,13 +43,21 @@ export default function WorkflowPage({
 
   const { stage } = data;
 
+  const stepsCard = data.steps?.length ? (
+    <Card className="p-4 animate-slide-up">
+      <StepLog steps={data.steps} />
+    </Card>
+  ) : null;
+
   if (stage === "init" || stage === "analyzing") {
     return (
       <div className="space-y-6">
         <StageIndicator currentStage={stage} />
-        <Card className="p-8 animate-slide-up">
-          <ActivityIndicator stage="Analyzing" description="Extracting video metadata, transcribing audio..." />
-        </Card>
+        {stepsCard || (
+          <Card className="p-8 animate-slide-up">
+            <ActivityIndicator stage="Analyzing" description="Extracting video metadata, transcribing audio..." />
+          </Card>
+        )}
       </div>
     );
   }
@@ -64,15 +73,12 @@ export default function WorkflowPage({
             baseVideoPath={data.video_paths?.base_video}
           />
         </div>
+        {stepsCard}
       </div>
     );
   }
 
   if (stage === "processing" || stage === "mg_preview") {
-    const desc = stage === "processing"
-      ? "Applying effects and generating motion graphics..."
-      : "Building motion graphics composition...";
-    const label = stage === "processing" ? "Processing" : "Preparing preview";
     return (
       <div className="space-y-6">
         <StageIndicator currentStage={stage} />
@@ -87,9 +93,11 @@ export default function WorkflowPage({
               />
             </Card>
           )}
-          <Card className="p-8">
-            <ActivityIndicator stage={label} description={desc} />
-          </Card>
+          {stepsCard || (
+            <Card className="p-8">
+              <ActivityIndicator stage="Processing" description="Applying effects and generating motion graphics..." />
+            </Card>
+          )}
         </div>
       </div>
     );
@@ -107,6 +115,7 @@ export default function WorkflowPage({
             videoPaths={data.video_paths}
           />
         </div>
+        {stepsCard}
       </div>
     );
   }
@@ -126,9 +135,11 @@ export default function WorkflowPage({
               />
             </Card>
           )}
-          <Card className="p-8">
-            <ActivityIndicator stage="Rendering" description="Encoding final video with all overlays..." />
-          </Card>
+          {stepsCard || (
+            <Card className="p-8">
+              <ActivityIndicator stage="Rendering" description="Encoding final video with all overlays..." />
+            </Card>
+          )}
         </div>
       </div>
     );

@@ -26,6 +26,14 @@ export type WorkflowStage =
   | "init" | "analyzing" | "timeline_approval" | "processing"
   | "mg_preview" | "mg_approval" | "rendering" | "done" | "error";
 
+export type StepStatus = "pending" | "active" | "done" | "skipped";
+
+export interface WorkflowStep {
+  key: string;
+  label: string;
+  status: StepStatus;
+}
+
 export interface TimelineEffect {
   effect_type: EffectType;
   start_time: number;
@@ -42,6 +50,7 @@ export interface TimelineEffect {
 
 export interface WorkflowStatus {
   stage: WorkflowStage;
+  steps?: WorkflowStep[];
   timeline?: { effects: TimelineEffect[]; conflicts_resolved: number; total_duration?: number };
   mg_plan?: Record<string, unknown>;
   video_info?: { fps: number; width: number; height: number; duration: number; total_frames: number };

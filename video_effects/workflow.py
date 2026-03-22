@@ -27,6 +27,7 @@ class VideoEffectsWorkflow:
         self._workflow_stage: str = "init"
         self._video_paths: dict = {}
         self._video_info: dict = {}
+        self._steps: list[dict] = []
 
     @workflow.signal
     async def approve_timeline(self, args: list) -> None:
@@ -71,6 +72,69 @@ class VideoEffectsWorkflow:
     def get_video_info(self) -> dict:
         return self._video_info
 
+    @workflow.query
+    def get_steps(self) -> list[dict]:
+        return self._steps
+
+    def _init_steps(self, input: VideoEffectsInput) -> None:
+        steps = [
+            ("analyze_video", "Analyzing video"),
+            ("transcribe", "Transcribing audio"),
+        ]
+        if not input.style:
+            steps.append(("design_style", "Designing style"))
+        steps += [
+            ("plan_effects", "Planning effects"),
+            ("validate_timeline", "Validating timeline"),
+        ]
+        if not input.auto_approve:
+            steps.append(("timeline_approval", "Timeline approval"))
+
+        enable_code_gen = input.enable_programmer or input.enable_motion_graphics
+        steps += [
+            ("prepare_render", "Preparing render"),
+            ("detect_faces", "Detecting faces"),
+            ("build_context", "Building spatial context"),
+        ]
+        if enable_code_gen:
+            steps.append(("generate_components", "Generating components"))
+        steps += [
+            ("apply_effects", "Applying effects"),
+            ("compose", "Composing final video"),
+        ]
+        if enable_code_gen or input.enable_subtitles or input.pinned_templates:
+            steps.append(("inject_overlays", "Assembling overlays"))
+        if enable_code_gen or input.pinned_templates:
+            if not input.auto_approve:
+                steps.append(("mg_approval", "Graphics approval"))
+            steps.append(("render_overlay", "Rendering overlay"))
+            steps.append(("composite", "Compositing final"))
+
+        self._steps = [{"key": k, "label": l, "status": "pending"} for k, l in steps]
+
+    def _step_start(self, key: str) -> None:
+        for s in self._steps:
+            if s["key"] == key:
+                s["status"] = "active"
+                return
+
+    def _step_done(self, key: str) -> None:
+        for s in self._steps:
+            if s["key"] == key:
+                s["status"] = "done"
+                return
+
+    def _step_skip(self, key: str) -> None:
+        for s in self._steps:
+            if s["key"] == key:
+                s["status"] = "skipped"
+                return
+
+    def _skip_remaining(self) -> None:
+        for s in self._steps:
+            if s["status"] == "pending":
+                s["status"] = "skipped"
+
     @workflow.run
     async def run(self, input: VideoEffectsInput) -> VideoEffectsOutput:
         video_path = input.input_video
@@ -81,11 +145,13 @@ class VideoEffectsWorkflow:
         long_timeout = timedelta(minutes=30)
 
         self._workflow_stage = "analyzing"
+        self._init_steps(input)
         # Expose input video immediately so the UI can show it at every stage
         self._video_paths = {"base_video": video_path, "face_data": "", "zoom_state": ""}
 
         # ── G1: Extract video info + audio (parallel) ──
         # TODO: Move this to a smaller function outside
+        self._step_start("analyze_video")
         video_info_task = workflow.execute_activity(
             "vfx_get_video_info",
             video_path,
@@ -100,16 +166,19 @@ class VideoEffectsWorkflow:
         video_info, audio_result = await asyncio.gather(
             video_info_task, extract_audio_task
         )
+        self._step_done("analyze_video")
         self._video_info = video_info
         audio_path = audio_result.get("audio_path")
         original_audio_path = audio_result.get("original_audio_path")
 
         # ── G2: Transcribe audio ──
+        self._step_start("transcribe")
         transcript_result = await workflow.execute_activity(
             "vfx_transcribe_audio",
             {"audio_path": audio_path},
             start_to_close_timeout=activity_timeout,
         )
+        self._step_done("transcribe")
 
         # ── Creative Designer: auto-detect or apply style ──
         if input.style:
@@ -117,6 +186,7 @@ class VideoEffectsWorkflow:
             style_preset_name = input.style
             workflow.logger.info("Using explicit style: %s", input.style)
         else:
+            self._step_start("design_style")
             creative_result = await workflow.execute_child_workflow(
                 "CreativeDesignerWorkflow",
                 {
@@ -129,9 +199,11 @@ class VideoEffectsWorkflow:
             style_config = creative_result["config"]
             style_preset_name = creative_result["preset_name"]
             workflow.logger.info("Creative designer picked style: %s", style_preset_name)
+            self._step_done("design_style")
 
         # ── G3-G5 loop: parse → validate → approve (retries on rejection) ──
         rejection_feedback = ""
+        self._step_start("plan_effects")
         for attempt in range(MAX_RETRIES):
             # G3: LLM parse effect cues
             parse_input = { # TODO: Come one man why isn't this a pydantic model its 2026 ffs?
@@ -150,8 +222,10 @@ class VideoEffectsWorkflow:
                 parse_input,
                 start_to_close_timeout=activity_timeout,
             )
+            self._step_done("plan_effects")
 
             # G4: Validate timeline
+            self._step_start("validate_timeline")
             timeline = await workflow.execute_activity(
                 "vfx_validate_timeline",
                 {
@@ -161,12 +235,14 @@ class VideoEffectsWorkflow:
                 start_to_close_timeout=activity_timeout,
             )
             self._timeline_data = timeline
+            self._step_done("validate_timeline")
 
             # G5: CLI approval
             if input.auto_approve:
                 break
 
             self._workflow_stage = "timeline_approval"
+            self._step_start("timeline_approval")
             # Reset decision and wait for signal
             self._approval_decision = None
             self._rejection_feedback = ""
@@ -184,6 +260,7 @@ class VideoEffectsWorkflow:
                 )
 
             if self._approval_decision:
+                self._step_done("timeline_approval")
                 break
 
             # Rejected — loop back to G3 with feedback
@@ -191,6 +268,11 @@ class VideoEffectsWorkflow:
             workflow.logger.info(
                 f"Timeline rejected (attempt {attempt + 1}/{MAX_RETRIES}): {rejection_feedback}"
             )
+            # Reset steps for retry loop
+            self._step_start("plan_effects")
+            for s in self._steps:
+                if s["key"] == "validate_timeline":
+                    s["status"] = "pending"
         else:
             self._workflow_stage = "error"
             return VideoEffectsOutput(
@@ -231,6 +313,7 @@ class VideoEffectsWorkflow:
         pinned_templates = getattr(input, "pinned_templates", []) or []
         has_pinned = bool(pinned_templates)
         if not effects and not enable_infographics and not enable_programmer and not has_transcript and not has_pinned:
+            self._skip_remaining()
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=0,
@@ -238,13 +321,16 @@ class VideoEffectsWorkflow:
             )
 
         # ── G6a: Prepare render plan ──
+        self._step_start("prepare_render")
         render_plan = await workflow.execute_activity(
             "vfx_prepare_render",
             {"video_path": video_path, "effects": effects, "video_info": video_info},
             start_to_close_timeout=activity_timeout,
         )
+        self._step_done("prepare_render")
 
         if not render_plan.get("has_effects") and not enable_infographics and not enable_programmer and not has_transcript and not has_pinned:
+            self._skip_remaining()
             return VideoEffectsOutput(
                 output_video=video_path,
                 effects_applied=len(effects),
@@ -253,6 +339,7 @@ class VideoEffectsWorkflow:
             )
 
         # ── Face detection (before G8a so face cache exists) ──
+        self._step_start("detect_faces")
         await workflow.execute_activity(
             "vfx_detect_faces",
             {
@@ -263,8 +350,10 @@ class VideoEffectsWorkflow:
             start_to_close_timeout=long_timeout,
             heartbeat_timeout=timedelta(minutes=5),
         )
+        self._step_done("detect_faces")
 
         # ── G8a: Build spatial context (shared by MG planning + infographics + subtitles) ──
+        self._step_start("build_context")
         spatial_context = None
         if True:  # Always build — subtitles always need it
             spatial_context = await workflow.execute_activity(
@@ -278,12 +367,14 @@ class VideoEffectsWorkflow:
                 },
                 start_to_close_timeout=activity_timeout,
             )
+        self._step_done("build_context")
 
         # ── Component generation (parallel with video render) ──
         # ProgrammerWorkflow takes priority over InfographicGeneratorWorkflow
         code_generation_task = None
         wid = workflow.info().workflow_id
         if enable_programmer and spatial_context:
+            self._step_start("generate_components")
             code_generation_task = workflow.execute_child_workflow(
                 "ProgrammerWorkflow",
                 {
@@ -298,6 +389,7 @@ class VideoEffectsWorkflow:
                 id=f"{wid}/programmer-gen",
             )
         elif enable_infographics and spatial_context:
+            self._step_start("generate_components")
             code_generation_task = workflow.execute_child_workflow(
                 "InfographicGeneratorWorkflow",
                 {
@@ -313,11 +405,12 @@ class VideoEffectsWorkflow:
             )
 
         # ── G6b: Setup processors (face tracking, etc.) ──
-        await workflow.execute_activity( 
+        self._step_start("apply_effects")
+        await workflow.execute_activity(
             "vfx_setup_processors",
             {
                 "video_path": video_path, "effects": effects,
-                "video_info": video_info, "cache_dir": temp_dir, # TODO: there's probably a better way to do this. temp dir thing. This doesn't feel right. 
+                "video_info": video_info, "cache_dir": temp_dir, # TODO: there's probably a better way to do this. temp dir thing. This doesn't feel right.
             },
             start_to_close_timeout=activity_timeout,
             heartbeat_timeout=timedelta(minutes=5),
@@ -337,13 +430,16 @@ class VideoEffectsWorkflow:
 
         if code_generation_task is not None:
             apply_result, code_generation_result = await asyncio.gather(render_task, code_generation_task)
+            self._step_done("generate_components")
         else:
             apply_result = await render_task
             code_generation_result = None
+        self._step_done("apply_effects")
 
         mg_plan = None
 
         # ── G7: Final composition + audio mux ──
+        self._step_start("compose")
         compose_result = await workflow.execute_activity(
             "vfx_compose_final",
             {
@@ -354,6 +450,7 @@ class VideoEffectsWorkflow:
             },
             start_to_close_timeout=activity_timeout,
         )
+        self._step_done("compose")
 
         base_output = compose_result["output_video"]
         mg_applied = 0
@@ -364,6 +461,15 @@ class VideoEffectsWorkflow:
         # Pre-compute word segments (needed for subtitle obstacle + subtitle injection)
         subtitle_segments = transcript_result.get("segments", [])
         word_segments = [s for s in subtitle_segments if s.get("type") == "word" and s.get("text", "").strip()]
+
+        # Track whether we have overlay work to do
+        _has_overlay_work = (
+            code_generation_result is not None
+            or (input.enable_subtitles and word_segments)
+            or pinned_templates
+        )
+        if _has_overlay_work:
+            self._step_start("inject_overlays")
 
         # ── Merge infographic components into MG plan ──
         if code_generation_result is not None:
@@ -555,6 +661,11 @@ class VideoEffectsWorkflow:
                     start_to_close_timeout=activity_timeout,
                 )
 
+        if _has_overlay_work:
+            self._step_done("inject_overlays")
+        else:
+            self._step_skip("inject_overlays")
+
         # ── MG Approval Gate ──
         face_data_path = spatial_context.get("face_data_path", "") if spatial_context else ""
         zoom_state_path = spatial_context.get("zoom_state_path", "") if spatial_context else ""
@@ -575,6 +686,7 @@ class VideoEffectsWorkflow:
 
                 if not input.auto_approve:
                     self._workflow_stage = "mg_approval"
+                    self._step_start("mg_approval")
                     for mg_attempt in range(MAX_RETRIES):
                         self._mg_approval_decision = None
                         self._mg_rejection_feedback = ""
@@ -592,6 +704,7 @@ class VideoEffectsWorkflow:
                             )
 
                         if self._mg_approval_decision:
+                            self._step_done("mg_approval")
                             mg_plan = self._mg_plan_data
                             break
 
@@ -638,6 +751,7 @@ class VideoEffectsWorkflow:
         # ── G8e + G9: Render overlay + composite (needs base video + approved plan) ──
         self._workflow_stage = "rendering"
         if mg_plan is not None and mg_plan.get("components"):
+            self._step_start("render_overlay")
             mg_applied = await self._render_and_composite_mg(
                 mg_plan=mg_plan,
                 base_video=base_output,
@@ -648,6 +762,7 @@ class VideoEffectsWorkflow:
                 long_timeout=long_timeout,
             )
 
+        self._skip_remaining()
         self._workflow_stage = "done"
         return VideoEffectsOutput(
             output_video=base_output,
@@ -695,10 +810,13 @@ class VideoEffectsWorkflow:
         )
 
         overlay_path = overlay_result.get("overlay_path", "")
+        self._step_done("render_overlay")
         if not overlay_path:
+            self._step_skip("composite")
             return 0
 
         # ── G9: Composite overlay onto base video ──
+        self._step_start("composite")
         await workflow.execute_activity(
             "vfx_composite_motion_graphics",
             {
@@ -709,5 +827,6 @@ class VideoEffectsWorkflow:
             },
             start_to_close_timeout=activity_timeout,
         )
+        self._step_done("composite")
 
         return overlay_result.get("components_rendered", 0)
