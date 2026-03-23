@@ -1,81 +1,16 @@
-from .video import get_video_info, extract_audio
-from .transcribe import transcribe_audio
-from .parse_cues import parse_effect_cues
-from .validate import validate_timeline
-from .apply_effects import apply_effects, prepare_render, setup_processors, render_video
-from .compose import compose_final
-from .remotion import (
-    detect_faces_activity,
-    build_remotion_context,
-    plan_motion_graphics,
-    validate_merged_plan,
-    load_composition_plan,
-    render_motion_overlay,
-    composite_motion_graphics,
-    preview_motion_graphics,
-    render_preview_clip,
-    edit_mg_plan,
-    start_studio_activity,
-    stop_studio_activity,
-    update_studio_preview_activity,
-)
-from .infographic import (
-    cleanup_generated,
-    plan_infographics,
-    plan_diagrams,
-    plan_timelines,
-    plan_quotes,
-    plan_code_blocks,
-    plan_comparisons,
-    generate_infographic_code,
-    validate_infographic,
-    build_generated_registry,
-    materialize_library_templates,
-)
-from .programmer import (
-    programmer_brainstorm,
-    programmer_critique,
-    programmer_generate_code,
-    place_library_templates,
-)
+"""Video Effects activities — shim that loads all skills via discovery.
 
+This module exists for backward compatibility. The actual activity
+implementations live in video_effects/skills/<skill_name>/.
+"""
+
+from video_effects.skills.discovery import load_all_skills
+from video_effects.skills.registry import get_all_activities, get_activities_by_queue
+
+# Trigger registration of all skill activities
+load_all_skills()
+
+# Build ALL_VIDEO_EFFECTS_ACTIVITIES from the registry
 ALL_VIDEO_EFFECTS_ACTIVITIES = [
-    get_video_info,
-    extract_audio,
-    transcribe_audio,
-    parse_effect_cues,
-    validate_timeline,
-    apply_effects,  # legacy, remove later
-    prepare_render,
-    setup_processors,
-    render_video,
-    compose_final,
-    detect_faces_activity,
-    build_remotion_context,
-    plan_motion_graphics,
-    validate_merged_plan,
-    load_composition_plan,
-    render_motion_overlay,
-    composite_motion_graphics,
-    preview_motion_graphics,
-    render_preview_clip,
-    cleanup_generated,
-    plan_infographics,
-    plan_diagrams,
-    plan_timelines,
-    plan_quotes,
-    plan_code_blocks,
-    plan_comparisons,
-    generate_infographic_code,
-    validate_infographic,
-    build_generated_registry,
-    materialize_library_templates,
-    programmer_brainstorm,
-    programmer_critique,
-    programmer_generate_code,
-    place_library_templates,
-    edit_mg_plan,
-    start_studio_activity,
-    stop_studio_activity,
-    update_studio_preview_activity,
+    cfg.func for cfg in get_all_activities().values() if cfg.func is not None
 ]

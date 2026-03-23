@@ -11,12 +11,12 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
-from video_effects.activities import ALL_VIDEO_EFFECTS_ACTIVITIES
-from video_effects.activities.creative import design_style
 from video_effects.config import settings
 from video_effects.creative_workflow import CreativeDesignerWorkflow
 from video_effects.infographic_workflow import InfographicGeneratorWorkflow
 from video_effects.programmer_workflow import ProgrammerWorkflow
+from video_effects.skills.discovery import load_all_skills
+from video_effects.skills.registry import get_activities_by_queue
 from video_effects.workflow import VideoEffectsWorkflow
 
 
@@ -30,14 +30,17 @@ async def get_temporal_client() -> Client:
 
 
 async def main():
+    load_all_skills()
+    activities = get_activities_by_queue(settings.TASK_QUEUE)
+
     client = await get_temporal_client()
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         worker = Worker(
             client,
             task_queue=settings.TASK_QUEUE,
             workflows=[VideoEffectsWorkflow, CreativeDesignerWorkflow, InfographicGeneratorWorkflow, ProgrammerWorkflow],
-            activities=[*ALL_VIDEO_EFFECTS_ACTIVITIES, design_style],
+            activities=activities,
             activity_executor=executor,
         )
 
@@ -45,7 +48,7 @@ async def main():
         print(f"  Task Queue: {settings.TASK_QUEUE}")
         print(f"  Namespace: {settings.TEMPORAL_NAMESPACE}")
         print(f"  Endpoint: {settings.TEMPORAL_ENDPOINT}")
-        print(f"  Activities: {len(ALL_VIDEO_EFFECTS_ACTIVITIES)}")
+        print(f"  Activities: {len(activities)}")
 
         await worker.run()
 

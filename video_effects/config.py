@@ -11,6 +11,7 @@ class VideoEffectsSettings(BaseSettings):
         env_prefix="VFX_",
     )
 
+    RUNTIME_MODE: str = "TEMPORAL"  # "TEMPORAL" or "TESTING"
     TASK_QUEUE: str = "video_effects_queue"
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_ENDPOINT: str = "localhost:7233"
@@ -34,7 +35,7 @@ class VideoEffectsSettings(BaseSettings):
 
     # Remotion motion graphics
     REMOTION_DIR: Optional[str] = None  # Override path to remotion/ project (default: auto-detected)
-    REMOTION_CONCURRENCY: Optional[int] = None  # Remotion render concurrency (default: Remotion auto)
+    REMOTION_CONCURRENCY: int = 8  # Remotion render concurrency (parallel Chromium instances)
     # Infographic code generation
     INFOGRAPHIC_MAX_RETRIES: int = 3  # Max code-gen + validate attempts per infographic
     INFOGRAPHIC_LLM_MODEL: str = "claude-opus-4-6"  # Use Opus for codegen quality

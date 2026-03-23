@@ -120,6 +120,7 @@ export function useFaceAwareLayout(
 
   const compW = staticBounds.w;
   const compH = staticBounds.h;
+  const isFullScreen = compW * compH > 0.8;
 
   // Proportional scale relative to face width (0.25 = baseline "normal" face)
   const faceScale = face
@@ -132,8 +133,13 @@ export function useFaceAwareLayout(
   let finalNormY: number;
   let currentScale: number;
 
-  // Fallback: static bounds with strengthened face avoidance + clamping
-  if (!face || anchor === "static") {
+  // Full-screen components: skip face avoidance and bounds clamping
+  if (isFullScreen) {
+    finalNormX = staticBounds.x;
+    finalNormY = staticBounds.y;
+    currentScale = 1;
+  } else if (!face || anchor === "static") {
+    // Fallback: static bounds with strengthened face avoidance + clamping
     const { offsetX, offsetY } = useFaceAvoidanceRaw(
       staticBounds,
       face,
@@ -187,6 +193,17 @@ export function useFaceAwareLayout(
   }
 
   // Apply zoom compensation so overlays track with zoomed content
+  // Skip for fullscreen components — they should stay fixed while base video zooms
+  if (isFullScreen) {
+    return {
+      left: finalNormX * width,
+      top: finalNormY * height,
+      scale: currentScale,
+      maxWidth: compW * width,
+      maxHeight: compH * height,
+    };
+  }
+
   const { adjustedX, adjustedY, adjustedScale } = useZoomCompensation(
     finalNormX,
     finalNormY,
