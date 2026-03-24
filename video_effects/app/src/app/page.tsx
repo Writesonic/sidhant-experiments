@@ -2,11 +2,12 @@
 
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { startWorkflow, listTemplates, type LibraryTemplateMeta } from "@/lib/api";
+import { startWorkflow, uploadVideo, listTemplates, type LibraryTemplateMeta } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
-  const [videoPath, setVideoPath] = useState("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState("");
   const [programmer, setProgrammer] = useState(false);
   const [mg, setMg] = useState(false);
   const [style, setStyle] = useState("");
@@ -27,8 +28,12 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
+      if (!videoFile) return;
+      setUploadStatus("Uploading...");
+      const { path } = await uploadVideo(videoFile);
+      setUploadStatus("Starting...");
       const { workflow_id } = await startWorkflow({
-        video_path: videoPath,
+        video_path: path,
         enable_programmer: programmer,
         enable_mg: mg || programmer,
         style: style || undefined,
@@ -39,6 +44,7 @@ export default function Home() {
       router.push(`/workflow/${workflow_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setUploadStatus("");
       setLoading(false);
     }
   }
@@ -57,16 +63,20 @@ export default function Home() {
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
           <label className="block text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">
-            Video path
+            Video file
           </label>
-          <input
-            type="text"
-            value={videoPath}
-            onChange={(e) => setVideoPath(e.target.value)}
-            placeholder="/path/to/video.mp4"
-            required
-            className="w-full bg-surface border border-border-card h-11 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent-dim focus:border-accent"
-          />
+          <label className="flex items-center gap-3 w-full bg-surface border border-border-card h-11 px-3 text-sm cursor-pointer hover:border-accent/40 transition-colors">
+            <span className="text-text-ghost shrink-0">Choose file</span>
+            <span className="text-text truncate">
+              {videoFile ? `${videoFile.name} (${(videoFile.size / 1024 / 1024).toFixed(1)} MB)` : "No file selected"}
+            </span>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+              className="hidden"
+            />
+          </label>
         </div>
 
         <div>
@@ -172,7 +182,7 @@ export default function Home() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !videoFile}
           className="w-full bg-accent hover:bg-accent/90 active:scale-[0.98] disabled:bg-border-card text-bg h-11 px-4 text-base font-semibold transition-all flex items-center justify-center gap-2"
         >
           {loading && (
@@ -186,7 +196,7 @@ export default function Home() {
               ))}
             </span>
           )}
-          {loading ? "Starting..." : "Start Workflow"}
+          {loading ? (uploadStatus || "Starting...") : "Start Workflow"}
         </button>
       </form>
     </div>

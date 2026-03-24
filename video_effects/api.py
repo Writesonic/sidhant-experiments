@@ -12,7 +12,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
@@ -51,6 +51,21 @@ async def _get_client() -> Client:
             data_converter=pydantic_data_converter,
         )
     return _client
+
+
+# ── POST /api/upload ──
+
+
+@app.post("/api/upload")
+async def upload_video(file: UploadFile) -> dict:
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    dest = upload_dir / filename
+    with open(dest, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    return {"path": str(dest)}
 
 
 # ── POST /api/workflows ──

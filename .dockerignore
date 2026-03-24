@@ -1,0 +1,31 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.DS_Store
+
+# Node modules (reinstalled inside image)
+**/node_modules
+video_effects/app/.next
+
+# Large media/input directories
+cv_experiments/inputs
+*.mp4
+*.mov
+*.webm
+*.avi
+*.mkv
+
+# Logs and temp
+*.log
+*.db
+*.db-journal
+
+# Build artifacts
+*.egg-info
+dist/
+build/
+
+# Not needed in Python image
+temporal_multi_agent

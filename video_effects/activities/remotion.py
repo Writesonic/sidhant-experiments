@@ -1073,6 +1073,26 @@ def render_motion_overlay(input_data: dict) -> dict:
     plan["width"] = width
     plan["height"] = height
 
+    # Copy face/zoom data into remotion/public/_preview/ so Remotion's
+    # bundler can serve them — DynamicComposition fetches these via HTTP.
+    from video_effects.helpers.remotion import _get_remotion_dir
+    preview_dir = _get_remotion_dir() / "public" / "_preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    face_path = plan.get("faceDataPath", "")
+    if face_path and os.path.exists(face_path):
+        import shutil
+        dst = preview_dir / "face_data.json"
+        shutil.copy2(face_path, dst)
+        plan["faceDataPath"] = "/_preview/face_data.json"
+
+    zoom_path = plan.get("zoomStatePath", "")
+    if zoom_path and os.path.exists(zoom_path):
+        import shutil
+        dst = preview_dir / "zoom_state.json"
+        shutil.copy2(zoom_path, dst)
+        plan["zoomStatePath"] = "/_preview/zoom_state.json"
+
     num_components = len(plan.get("components", []))
     if num_components == 0:
         logger.info("No motion graphics components in plan, skipping render")

@@ -161,9 +161,19 @@ export default function WorkflowPage({
               <Stat value={String(r.phases)} label="Phases" />
             )}
           </div>
-          <Card className="p-5">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-text-ghost mb-2">Output path</p>
-            <code className="text-sm text-text break-all">{String(r.output_video)}</code>
+          <Card className="p-5 space-y-4">
+            <video
+              src={fileUrl(String(r.output_video))}
+              controls
+              className="w-full max-h-[500px] bg-black"
+            />
+            <a
+              href={fileUrl(String(r.output_video))}
+              download
+              className="inline-block px-4 py-2.5 bg-accent hover:bg-accent/90 text-bg text-sm font-semibold transition-colors"
+            >
+              Download
+            </a>
           </Card>
           <Link
             href="/"

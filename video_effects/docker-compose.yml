@@ -1,0 +1,70 @@
+services:
+  temporal:
+    image: temporalio/temporal:latest
+    ports:
+      - "7233:7233"
+      - "8080:8080"
+    command: server start-dev --ip 0.0.0.0 --ui-port 8080
+
+  worker:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: video_effects/Dockerfile
+      platforms:
+        - linux/amd64
+    command: python -m video_effects.worker
+    env_file: ../.env
+    environment:
+      - VFX_TEMPORAL_ENDPOINT=temporal:7233
+      - VFX_FACE_LANDMARKER_PATH=/app/cv_experiments/face_landmarker.task
+      - VFX_TEMPLATE_LIBRARY_PATH=/app/video_effects/data/template_library.json
+      - VFX_ALLOWED_FILE_DIRS=["/tmp/video_effects","/app"]
+    volumes:
+      - vfx-tmp:/tmp/video_effects
+      - remotion-chrome:/root/.cache/remotion
+      - ~/.modal.toml:/root/.modal.toml:ro
+      - generated-components:/app/video_effects/remotion/src/components/generated
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  api:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: video_effects/Dockerfile
+      platforms:
+        - linux/amd64
+    command: uvicorn video_effects.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file: ../.env
+    environment:
+      - VFX_TEMPORAL_ENDPOINT=temporal:7233
+      - VFX_TEMPLATE_LIBRARY_PATH=/app/video_effects/data/template_library.json
+      - VFX_ALLOWED_FILE_DIRS=["/tmp/video_effects","/app"]
+      - VFX_API_CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
+    volumes:
+      - vfx-tmp:/tmp/video_effects
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+    volumes:
+      - generated-components:/app/remotion/src/components/generated
+    depends_on:
+      - api
+
+volumes:
+  vfx-tmp:
+  remotion-chrome:
+  generated-components:

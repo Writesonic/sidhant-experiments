@@ -78,6 +78,14 @@ export async function signalWorkflow(
   if (!res.ok) throw new Error(await res.text());
 }
 
+export async function uploadVideo(file: File): Promise<{ path: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export function fileUrl(path: string): string {
   return `${API_BASE}/api/files?path=${encodeURIComponent(path)}`;
 }
