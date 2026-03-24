@@ -693,10 +693,27 @@ def _resolve_all_conflicts(
             })
             continue
 
-        # Full-screen components (area > 0.8) — skip spatial conflict resolution entirely.
-        # These are atmospheric effects (color flash, text card, letterbox) that intentionally
-        # cover most/all of the screen and should not be relocated or blocked by face windows.
+        # Full-screen components (area > 0.8) — skip spatial relocation but resolve
+        # temporal overlaps with other full-screen components by trimming the later one.
         if bw * bh > 0.8:
+            for p in placed:
+                if p.get("w", 0) * p.get("h", 0) <= 0.8:
+                    continue
+                if comp["start_time"] < p["end_time"] and p["start_time"] < comp["end_time"]:
+                    # Temporal overlap between two full-screen components — trim this one
+                    if comp["start_time"] < p["start_time"]:
+                        comp["end_time"] = p["start_time"]
+                    else:
+                        comp["start_time"] = p["end_time"]
+                    if comp["end_time"] <= comp["start_time"]:
+                        comp["end_time"] = comp["start_time"] + 0.1
+                    issues.append(f"Trimmed full-screen '{tpl}' to avoid overlap with another full-screen component")
+                    changed = True
+            placed.append({
+                "x": bounds.get("x", 0), "y": bounds.get("y", 0),
+                "w": bw, "h": bh,
+                "start_time": comp["start_time"], "end_time": comp["end_time"],
+            })
             continue
 
         # Build obstacles: padded face rects + already-placed component rects + static obstacles

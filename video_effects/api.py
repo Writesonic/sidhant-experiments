@@ -3,6 +3,8 @@
 Run with: uvicorn video_effects.api:app --port 8000
 """
 
+import asyncio
+import json
 import os
 import re
 import uuid
@@ -13,6 +15,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from temporalio.client import Client
 from temporalio.common import QueryRejectCondition
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -154,6 +157,66 @@ async def get_workflow_status(workflow_id: str) -> dict:
         result.setdefault("error", str(e))
 
     return result
+
+
+# ── SSE /api/workflows/{id}/stream ──
+
+
+@app.get("/api/workflows/{workflow_id}/stream")
+async def stream_workflow_status(workflow_id: str, request: Request):
+    """Server-Sent Events stream for workflow progress. Pushes updates only
+    when the step statuses or stage actually change, instead of the client
+    polling every few seconds."""
+
+    client = await _get_client()
+    handle = client.get_workflow_handle(workflow_id)
+
+    async def event_generator():
+        last_snapshot = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                stage = await _query(handle, "get_workflow_stage")
+                result: dict[str, Any] = {"stage": stage}
+
+                try:
+                    result["video_paths"] = await _query(handle, "get_video_paths")
+                except Exception:
+                    pass
+                try:
+                    result["steps"] = await _query(handle, "get_steps")
+                except Exception:
+                    pass
+
+                if stage == "timeline_approval":
+                    result["timeline"] = await _query(handle, "get_timeline")
+                elif stage == "mg_approval":
+                    result["mg_plan"] = await _query(handle, "get_mg_plan")
+                    result["video_info"] = await _query(handle, "get_video_info")
+                elif stage == "done":
+                    wf_result = await handle.result()
+                    result["result"] = wf_result if isinstance(wf_result, dict) else wf_result.model_dump()
+                elif stage == "error":
+                    wf_result = await handle.result()
+                    result["error"] = wf_result.get("error") if isinstance(wf_result, dict) else wf_result.error
+
+                snapshot = json.dumps(result, sort_keys=True, default=str)
+                if snapshot != last_snapshot:
+                    last_snapshot = snapshot
+                    yield {"event": "update", "data": json.dumps(result, default=str)}
+
+                if stage in ("done", "error"):
+                    break
+
+            except Exception as e:
+                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                break
+
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 # ── POST /api/workflows/{id}/signal ──
