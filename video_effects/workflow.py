@@ -668,10 +668,13 @@ class VideoEffectsWorkflow:
             # Only gate if there are non-subtitle components worth reviewing
             has_reviewable = any(c.get("template") != "subtitles" for c in mg_plan["components"])
             if has_reviewable:
+                # Read generated TSX sources for browser-side compilation
+                sources_result = await workflow.execute_activity(
+                    "vfx_read_component_sources", {},
+                    start_to_close_timeout=timedelta(seconds=10),
+                )
+                mg_plan["component_sources"] = sources_result.get("sources", {})
                 self._mg_plan_data = mg_plan
-
-                # No CLI preview rendering — the Next.js app uses @remotion/player
-                # to preview directly in the browser via the get_video_paths query.
 
                 if not input.auto_approve:
                     self._workflow_stage = "mg_approval"

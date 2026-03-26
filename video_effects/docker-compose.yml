@@ -7,12 +7,9 @@ services:
     command: server start-dev --ip 0.0.0.0 --ui-port 8080
 
   worker:
-    platform: linux/amd64
     build:
       context: ..
       dockerfile: video_effects/Dockerfile
-      platforms:
-        - linux/amd64
     command: python -m video_effects.worker
     env_file: ../.env
     environment:
@@ -23,19 +20,16 @@ services:
     volumes:
       - vfx-tmp:/tmp/video_effects
       - remotion-chrome:/root/.cache/remotion
-      - ~/.modal.toml:/root/.modal.toml:ro
+      - /home/sidhant/.modal.toml:/root/.modal.toml:ro
       - generated-components:/app/video_effects/remotion/src/components/generated
     depends_on:
       - temporal
     restart: unless-stopped
 
   api:
-    platform: linux/amd64
     build:
       context: ..
       dockerfile: video_effects/Dockerfile
-      platforms:
-        - linux/amd64
     command: uvicorn video_effects.api:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
@@ -44,7 +38,7 @@ services:
       - VFX_TEMPORAL_ENDPOINT=temporal:7233
       - VFX_TEMPLATE_LIBRARY_PATH=/app/video_effects/data/template_library.json
       - VFX_ALLOWED_FILE_DIRS=["/tmp/video_effects","/app"]
-      - VFX_API_CORS_ORIGINS=["http://localhost:3000","http://localhost:3001"]
+      - VFX_API_CORS_ORIGINS=["http://localhost:3000","http://localhost:3001","http://192.168.68.60:3001","https://coderunner.sidhantsriv.me"]
     volumes:
       - vfx-tmp:/tmp/video_effects
     depends_on:
@@ -55,10 +49,10 @@ services:
     build:
       context: .
       dockerfile: app/Dockerfile
+      args:
+        - NEXT_PUBLIC_API_BASE=https://coderunner.sidhantsriv.me
     ports:
       - "3001:3000"
-    environment:
-      - NEXT_PUBLIC_API_BASE=http://localhost:8000
     volumes:
       - generated-components:/app/remotion/src/components/generated
     depends_on:

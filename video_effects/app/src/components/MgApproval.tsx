@@ -6,6 +6,7 @@ import type { CompositionPlan, ComponentSpec, NormalizedRect } from "@remotion-p
 import { VideoPlayer } from "./VideoPlayer";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { Badge, Card, ActionBar } from "@/components/ui";
+import { useGeneratedComponents } from "@/hooks/useGeneratedComponents";
 
 const TEMPLATE_BORDERS: Record<string, string> = {
   animated_title: "border-l-fx-zoom",
@@ -62,10 +63,11 @@ interface Props {
   workflowId: string;
   mgPlan: Record<string, unknown>;
   videoInfo: Record<string, number>;
-  videoPaths: { base_video: string; face_data: string; zoom_state: string };
+  videoPaths: { base_video: string; face_data: string; zoom_state: string; mg_preview?: string };
 }
 
 export function MgApproval({ workflowId, mgPlan, videoInfo, videoPaths }: Props) {
+  useGeneratedComponents(mgPlan.component_sources as Record<string, string> | undefined);
   const [sending, setSending] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<{
     type: "all" | "component";

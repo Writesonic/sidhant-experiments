@@ -29,9 +29,11 @@ export default function Home() {
     setError(null);
     try {
       if (!videoFile) return;
-      setUploadStatus("Uploading...");
-      const { path } = await uploadVideo(videoFile);
-      setUploadStatus("Starting...");
+      setUploadStatus("Uploading… 0%");
+      const { path } = await uploadVideo(videoFile, (pct) =>
+        setUploadStatus(`Uploading… ${pct}%`),
+      );
+      setUploadStatus("Starting…");
       const { workflow_id } = await startWorkflow({
         video_path: path,
         enable_programmer: programmer,

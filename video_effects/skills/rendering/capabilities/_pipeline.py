@@ -181,7 +181,7 @@ def _process_single_pass(
         [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
             "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-s", f"{w}x{h}", "-r", str(video_info.fps),
+            "-s", f"{w}x{h}", "-r", video_info.fps_fraction or str(video_info.fps),
             "-i", "pipe:0",
             "-vf", "scale=in_range=full:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709",
             "-c:v", "libx264", "-preset", "medium", "-crf", "16",

@@ -68,6 +68,49 @@ async def upload_video(file: UploadFile) -> dict:
     return {"path": str(dest)}
 
 
+@app.post("/api/upload/init")
+async def upload_init(body: dict[str, Any]) -> dict:
+    """Initialize a chunked upload. Returns an upload_id."""
+    filename = body.get("filename", "video.mp4")
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_id = uuid.uuid4().hex[:12]
+    chunk_dir = upload_dir / f".chunks_{upload_id}"
+    chunk_dir.mkdir()
+    meta = {"filename": f"{upload_id}_{filename}", "total_chunks": body.get("total_chunks", 0)}
+    (chunk_dir / "meta.json").write_text(json.dumps(meta))
+    return {"upload_id": upload_id}
+
+
+@app.post("/api/upload/{upload_id}/chunk/{chunk_index}")
+async def upload_chunk(upload_id: str, chunk_index: int, request: Request) -> dict:
+    """Receive a single chunk as raw bytes."""
+    chunk_dir = Path(settings.TEMP_DIR) / "uploads" / f".chunks_{upload_id}"
+    if not chunk_dir.exists():
+        raise HTTPException(404, "Unknown upload_id")
+    data = await request.body()
+    (chunk_dir / f"{chunk_index:06d}").write_bytes(data)
+    return {"ok": True}
+
+
+@app.post("/api/upload/{upload_id}/complete")
+async def upload_complete(upload_id: str) -> dict:
+    """Assemble chunks into final file."""
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    chunk_dir = upload_dir / f".chunks_{upload_id}"
+    if not chunk_dir.exists():
+        raise HTTPException(404, "Unknown upload_id")
+    meta = json.loads((chunk_dir / "meta.json").read_text())
+    dest = upload_dir / meta["filename"]
+    chunks = sorted(p for p in chunk_dir.iterdir() if p.name != "meta.json")
+    with open(dest, "wb") as out:
+        for chunk_path in chunks:
+            out.write(chunk_path.read_bytes())
+    import shutil
+    shutil.rmtree(chunk_dir)
+    return {"path": str(dest)}
+
+
 # ── POST /api/workflows ──
 
 

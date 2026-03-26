@@ -57,3 +57,9 @@ class MaterializeLibraryTemplatesRequest(BaseModel):
 
 class MaterializeLibraryTemplatesResponse(BaseModel):
     materialized: list[str] = []
+
+class ReadComponentSourcesRequest(BaseModel):
+    pass
+
+class ReadComponentSourcesResponse(BaseModel):
+    sources: dict[str, str] = {}

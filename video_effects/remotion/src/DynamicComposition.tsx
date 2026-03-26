@@ -14,6 +14,9 @@ import { StyleProvider } from "./lib/styles";
 import { ComponentRegistry } from "./components";
 import type { CompositionPlan, FaceFrame, StyleConfig, ZoomFrame } from "./types";
 
+const resolveAsset = (path: string | undefined): string =>
+  !path ? "" : path.startsWith("http") ? path : staticFile(path.replace(/^\//, ""));
+
 export const DynamicComposition: React.FC<CompositionPlan> = ({
   components,
   colorPalette,
@@ -27,6 +30,10 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
   const [zoomData, setZoomData] = useState<Map<number, ZoomFrame>>(new Map());
   const [handle] = useState(() => delayRender());
 
+  const resolvedVideoSrc = resolveAsset(baseVideoPath);
+  const resolvedFaceDataPath = resolveAsset(faceDataPath);
+  const resolvedZoomStatePath = resolveAsset(zoomStatePath);
+
   useEffect(() => {
     let pending = 0;
     const maybeFinish = () => {
@@ -35,9 +42,9 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
     };
 
     // Load face data
-    if (faceDataPath) {
+    if (resolvedFaceDataPath) {
       pending++;
-      fetch(faceDataPath)
+      fetch(resolvedFaceDataPath)
         .then((r) => r.json())
         .then((raw: unknown) => {
           // Handle both dict format and old bare-array format
@@ -69,9 +76,9 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
     }
 
     // Load zoom state
-    if (zoomStatePath) {
+    if (resolvedZoomStatePath) {
       pending++;
-      fetch(zoomStatePath)
+      fetch(resolvedZoomStatePath)
         .then((r) => r.json())
         .then((data: { frames: Record<string, number[]> }) => {
           const map = new Map<number, ZoomFrame>();
@@ -85,7 +92,7 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
     }
 
     if (pending === 0) continueRender(handle);
-  }, [faceDataPath, zoomStatePath, handle]);
+  }, [resolvedFaceDataPath, resolvedZoomStatePath, handle]);
 
   // Resolve font and build final style config
   const resolvedStyle = React.useMemo<StyleConfig | undefined>(() => {
@@ -107,8 +114,8 @@ export const DynamicComposition: React.FC<CompositionPlan> = ({
       <FaceDataProvider faceData={faceData}>
         <ZoomDataProvider zoomData={zoomData}>
           <AbsoluteFill style={{ backgroundColor: "transparent" }}>
-            {includeBaseVideo && baseVideoPath && (
-              <Video src={baseVideoPath} />
+            {includeBaseVideo && resolvedVideoSrc && (
+              <Video src={resolvedVideoSrc} />
             )}
             {sorted.map((comp, i) => {
               const Component = ComponentRegistry[comp.template];

@@ -96,3 +96,4 @@ class VideoInfo(BaseModel):
     color_transfer: str = ""
     color_primaries: str = ""
     pix_fmt: str = ""
+    fps_fraction: str = ""  # exact fractional fps e.g. "30000/1001"

@@ -1177,7 +1177,7 @@ def preview_motion_graphics(input_data: dict) -> dict:
 
 @activity.defn(name="vfx_render_preview_clip")
 def render_preview_clip(input_data: dict) -> dict:
-    """Render full StudioPreview as H264 MP4 at reduced resolution for inline playback.
+    """Render MotionOverlay with base video as H264 MP4 for inline preview.
 
     Input: {
         "composition_plan": dict,
@@ -1198,15 +1198,50 @@ def render_preview_clip(input_data: dict) -> dict:
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Preview assets already written by vfx_preview_motion_graphics (runs first)
+    write_preview_assets(
+        mg_plan=plan,
+        base_video_path=base_video,
+        face_data_path=face_data_path,
+        zoom_state_path=zoom_state_path,
+        video_info=video_info,
+    )
+
+    fps = video_info.get("fps", 30)
+    src_w = int(video_info.get("width", 1920))
+    src_h = int(video_info.get("height", 1080))
+    total_frames = video_info.get("total_frames") or int(video_info.get("duration", 10) * fps)
+
+    # Render at reduced resolution + capped fps for speed — preview only
+    scale = 2 if src_w > 1280 else 1
+    width = src_w // scale
+    height = src_h // scale
+    preview_fps = min(int(fps), 30)
+    preview_frames = int(total_frames * preview_fps / fps)
+
+    props = {
+        **plan,
+        "includeBaseVideo": True,
+        "baseVideoPath": "/_preview/base.mp4",
+        "faceDataPath": "/_preview/face_data.json" if face_data_path and os.path.exists(face_data_path) else "",
+        "zoomStatePath": "/_preview/zoom_state.json" if zoom_state_path and os.path.exists(zoom_state_path) else "",
+        "durationInFrames": preview_frames,
+        "fps": preview_fps,
+        "width": width,
+        "height": height,
+    }
+
     clip_path = os.path.join(output_dir, "preview_clip.mp4")
+    activity.heartbeat("Rendering preview clip")
     render_media(
-        composition_id="StudioPreview",
-        props={},
+        composition_id="MotionOverlay",
+        props=props,
         output_path=clip_path,
         codec="h264",
-        width=960,
-        height=540,
+        width=width,
+        height=height,
+        fps=preview_fps,
+        duration_in_frames=preview_frames,
+        timeout=1800,
     )
 
     return {"clip_path": clip_path}

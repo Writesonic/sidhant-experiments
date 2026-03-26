@@ -6,6 +6,7 @@ from video_effects.skills.infographic.capabilities.generate_infographic_code imp
 from video_effects.skills.infographic.capabilities.validate_infographic import ValidateInfographicCapability
 from video_effects.skills.infographic.capabilities.build_generated_registry import BuildGeneratedRegistryCapability
 from video_effects.skills.infographic.capabilities.materialize_library_templates import MaterializeLibraryTemplatesCapability
+from video_effects.skills.infographic.capabilities.read_component_sources import ReadComponentSourcesCapability
 from video_effects.skills.infographic.schemas import (
     CleanupGeneratedRequest,
     PlanCategoryRequest,
@@ -13,6 +14,7 @@ from video_effects.skills.infographic.schemas import (
     ValidateInfographicRequest,
     BuildGeneratedRegistryRequest,
     MaterializeLibraryTemplatesRequest,
+    ReadComponentSourcesRequest,
 )
 
 
@@ -80,4 +82,10 @@ def vfx_build_generated_registry(input_data: dict) -> dict:
 def vfx_materialize_library_templates(input_data: dict) -> dict:
     request = MaterializeLibraryTemplatesRequest(**input_data)
     response = run_capability_sync(MaterializeLibraryTemplatesCapability, request)
+    return response.model_dump()
+
+@register_activity(name="vfx_read_component_sources", description="Read generated component TSX sources")
+def vfx_read_component_sources(input_data: dict) -> dict:
+    request = ReadComponentSourcesRequest()
+    response = run_capability_sync(ReadComponentSourcesCapability, request)
     return response.model_dump()

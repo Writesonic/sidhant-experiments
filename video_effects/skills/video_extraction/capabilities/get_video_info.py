@@ -27,7 +27,8 @@ class GetVideoInfoCapability(BaseCapability[GetVideoInfoRequest, GetVideoInfoRes
         if video_stream is None:
             raise ValueError(f"No video stream found in {request.video_path}")
 
-        fps_parts = video_stream.get("r_frame_rate", "30/1").split("/")
+        fps_fraction = video_stream.get("avg_frame_rate", "30/1")
+        fps_parts = fps_fraction.split("/")
         fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 else 30.0
 
         duration = float(probe["format"].get("duration", 0))
@@ -38,6 +39,7 @@ class GetVideoInfoCapability(BaseCapability[GetVideoInfoRequest, GetVideoInfoRes
             width=width,
             height=height,
             fps=fps,
+            fps_fraction=fps_fraction,
             duration=duration,
             codec=video_stream.get("codec_name", ""),
             total_frames=int(duration * fps),
