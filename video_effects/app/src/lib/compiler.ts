@@ -26,7 +26,10 @@ const AVAILABLE_GLOBALS: Record<string, unknown> = {
 };
 
 function stripImports(code: string): string {
-  return code.replace(/^import\s+.*?['";]\s*$/gm, "");
+  // Single-line: import { x } from "y";
+  // Multi-line:  import {\n  x,\n  y,\n} from "z";
+  // Type imports: import type { X } from "y";
+  return code.replace(/^import\s[\s\S]*?from\s+['"].*?['"];?\s*$/gm, "");
 }
 
 function extractExportName(code: string): string | null {
@@ -36,7 +39,10 @@ function extractExportName(code: string): string | null {
   return match ? match[1] : null;
 }
 
-export function compileComponent(code: string): {
+export function compileComponent(
+  code: string,
+  extraGlobals?: Record<string, unknown>,
+): {
   Component: React.FC<any> | null;
   error: string | null;
 } {
@@ -59,8 +65,11 @@ export function compileComponent(code: string): {
       return { Component: null, error: "Babel transform produced no output" };
     }
 
-    const globalKeys = Object.keys(AVAILABLE_GLOBALS);
-    const globalValues = globalKeys.map((k) => AVAILABLE_GLOBALS[k]);
+    const allGlobals = extraGlobals
+      ? { ...AVAILABLE_GLOBALS, ...extraGlobals }
+      : AVAILABLE_GLOBALS;
+    const globalKeys = Object.keys(allGlobals);
+    const globalValues = globalKeys.map((k) => allGlobals[k]);
 
     // Wrap in function that returns the component
     const wrappedCode = `${transformed.code}\nreturn ${exportName};`;

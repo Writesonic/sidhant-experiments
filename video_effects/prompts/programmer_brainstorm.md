@@ -29,7 +29,43 @@ You can propose ANY of these (and more):
 - Side-by-side comparisons
 - Stat counters and KPIs
 
-### Full-Screen Effects
+## Sizing Decision Guide
+
+Choose bounds based on CONTENT DENSITY, not just aesthetics:
+
+### Full-Screen Components (`{x:0, y:0, w:1, h:1}`)
+Use full-screen bounds when the component contains information the viewer needs to READ or COMPARE. Full-screen components are NOT just atmospheric — they are the primary way to present dense information clearly.
+
+**MUST be full-screen:**
+- Charts, graphs, plots with 2+ data points (bar charts, line graphs, gauges, pie charts)
+- Statistics dashboards with 3+ numbers
+- Comparison graphics (before/after, A vs B, old vs new)
+- Timelines and process flows
+- Chapter markers and section title cards
+- "Key takeaway" or "bottom line" summary cards
+- Any table or structured data layout
+- Ranked lists with 4+ items
+
+**How full-screen data viz works:** The component fills the screen with a semi-transparent dark backdrop (`rgba(0,0,0,0.7)`) so text/data is readable. The base video dims behind it. Use `z_index: 2`. The component renders for 3-8 seconds (enough to read), then fades out. Face avoidance is skipped for full-screen.
+
+### Large In-Frame Components (`w: 0.4-0.6, h: 0.35-0.5`)
+Use large bounds when content is meaningful but doesn't need the whole screen:
+- Single statistic with label and icon (e.g., "8.25 seconds")
+- Quote callouts with attribution
+- Simple 2-item comparison
+- Diagram or illustration with minimal text
+
+### Small In-Frame Components (`w: 0.2-0.35, h: 0.15-0.3`)
+Use small bounds only for minimal, ambient overlays:
+- Name/title lower thirds
+- Single-word labels or tags
+- Icon badges
+- Simple counters
+
+### Default: When In Doubt, Go Bigger
+If you're unsure about sizing, use large in-frame (`w: 0.45, h: 0.4`) or full-screen. Small overlays are hard to read on mobile. **Never use bounds smaller than `w: 0.25, h: 0.2` for anything with text.**
+
+### Full-Screen Effects & Data Visualizations
 
 Effects that use the entire 1920×1080 canvas. Use bounds `{x:0, y:0, w:1, h:1}` and a low `z_index` (2) so they render below infographics.
 
@@ -41,6 +77,11 @@ Effects that use the entire 1920×1080 canvas. Use bounds `{x:0, y:0, w:1, h:1}`
 - **Letterbox / Cinematic Bars** — Black bars slide in from top/bottom (widescreen ratio). Two divs with spring-animated `height`. Trigger: dramatic pauses, storytelling shifts.
 - **Particle / Confetti Burst** — 30-50 small div shapes explode outward with gravity decay via `interpolate`. Randomized initial velocity per particle. Trigger: celebrations, milestones, endings.
 - **Glitch / Distortion Flash** — Layered colored divs offset by a few pixels + opacity flicker for 0.3-0.5s. Trigger: "broken", shocking revelations.
+- **Full-Screen Data Chart** — Bar chart, line graph, gauge, or pie chart filling the screen with animated data. Semi-transparent dark backdrop for readability. Data enters via staggered springs. Trigger: statistics, comparisons, measurements, "the numbers show", "X percent".
+- **Chapter / Section Card** — Bold title text centered on screen, optional subtitle and section number. Dark backdrop with accent border or decorative element. 2-3 second hold. Trigger: topic transitions, "let's talk about", "part two", "first", "next up".
+- **Statistics Dashboard** — 3-6 stat boxes arranged in a grid. Each stat animates in with a counter + label. Trigger: survey results, multiple data points, "here are the numbers".
+- **Comparison Split** — Screen split into 2-3 columns comparing items. Headers, values, and visual indicators. Trigger: "versus", "compared to", "on one hand", "the difference".
+- **Timeline / Process Flow** — Horizontal or vertical timeline with milestones. Nodes animate sequentially. Trigger: "over the years", "step by step", "the history", chronological content.
 
 ### Border & Frame Effects
 
@@ -88,15 +129,18 @@ These use the alpha pipeline to create "windows" — the overlay renders an opaq
 - Safe regions are labeled areas where you CAN place components
 - **RESERVED: y >= 0.78 is the subtitle zone — never place components there**
 - Use normalized coordinates (0-1) for bounds: `{x, y, w, h}` where (x,y) is top-left
-- Common safe zones: right side (x: 0.55-0.65), bottom (y: 0.6-0.72), left (x: 0.05-0.1)
+- **Full-screen data viz**: `{x:0, y:0, w:1, h:1}` — charts, graphs, chapter markers, dense stats
+- **Large in-frame**: `{x: 0.05, y: 0.1, w: 0.5, h: 0.45}` or `{x: 0.4, y: 0.1, w: 0.55, h: 0.45}` — single stats, quotes, simple diagrams
+- **Small in-frame**: `{x: 0.6, y: 0.55, w: 0.3, h: 0.2}` — labels, badges, minimal callouts
+- **Never use bounds smaller than `w: 0.25, h: 0.2`** for anything containing text
 - **Full-screen effects** (`{x:0, y:0, w:1, h:1}`) are exempt from face avoidance and bounds clamping — they intentionally cover the entire screen
 
 ## Z-Index Tiers
 
 Use these tiers consistently for proper layering:
-- `z_index: 2` — Full-screen atmospheric effects (color flash, vignette, letterbox)
+- `z_index: 2` — Full-screen effects: atmospheric (color flash, letterbox) AND data viz (charts, dashboards, chapter cards)
 - `z_index: 5` — Border/frame effects (animated border, corner brackets, edge glow)
-- `z_index: 10` — Standard infographic overlays (data viz, titles, listicles) ← default
+- `z_index: 10` — In-frame infographic overlays (single stats, quotes, callouts) ← default
 - `z_index: 100` — Subtitles (reserved, never use)
 
 ## Temporal Rules

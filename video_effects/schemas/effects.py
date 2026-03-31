@@ -51,9 +51,13 @@ class BlurParams(BaseModel):
 
 
 class ColorParams(BaseModel):
-    preset: Literal["warm", "cool", "bw", "sepia", "dramatic", "custom"] = "warm"
+    preset: Literal[
+        "warm", "cool", "bw", "sepia", "dramatic",
+        "vibrant", "vintage", "film",
+        "custom",
+    ] = "warm"
     intensity: float = Field(0.5, ge=0.0, le=1.0)
-    # For custom: BGR adjustments
+    # For custom mode only: per-channel RGB adjustments
     r_adjust: float = 0.0
     g_adjust: float = 0.0
     b_adjust: float = 0.0
@@ -96,3 +100,4 @@ class VideoInfo(BaseModel):
     color_transfer: str = ""
     color_primaries: str = ""
     pix_fmt: str = ""
+    fps_fraction: str = ""  # exact fractional fps e.g. "30000/1001"

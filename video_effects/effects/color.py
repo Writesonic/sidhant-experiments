@@ -1,34 +1,67 @@
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
 import numpy as np
-import cv2
 
 from video_effects.effects.base import BaseEffect, EffectContext
+from video_effects.effects.lut import LUT3D, apply_lut3d, parse_cube_file
 from video_effects.schemas.effects import EffectCue, VideoInfo
 
+logger = logging.getLogger(__name__)
 
-# Pre-defined color grading LUTs (RGB adjustments)
-COLOR_PRESETS = {
-    "warm": (10, -5, -15),     # R=+10, G=-5, B=-15 (boost red, reduce blue)
-    "cool": (-15, 0, 15),      # R=-15, G=0,  B=+15 (boost blue, reduce red)
-    "dramatic": (-10, -20, 0), # deepen shadows
-    "sepia": None,              # special handling
-    "bw": None,                 # special handling
+_LUT_DIR = Path(__file__).resolve().parent.parent / "data" / "luts"
+
+LUT_PRESETS: dict[str, str] = {
+    "warm":     "negative_new/kodak_portra_400.cube",
+    "cool":     "fujixtransiii/fuji_xtrans_iii_classic_chrome.cube",
+    "dramatic": "colorslide/kodak_kodachrome_64.cube",
+    "vibrant":  "colorslide/fuji_velvia_50.cube",
+    "vintage":  "instant_consumer/polaroid_time_zero_expired.cube",
+    "film":     "colorslide/fuji_provia_100f.cube",
+    "bw":       "negative_new/kodak_tri-x_400.cube",
+    "sepia":    "fujixtransiii/fuji_xtrans_iii_sepia.cube",
 }
 
 
 class ColorEffect(BaseEffect):
-    """Color grading effect with presets and custom adjustments."""
+    """LUT-based color grading effect with film stock presets."""
 
     def __init__(self):
         super().__init__()
         self._video_info: VideoInfo | None = None
+        self._lut_cache: dict[str, LUT3D] = {}
 
-    def setup(self, video_info: VideoInfo, effect_cues: list[EffectCue],
-              *, cache_dir: str | None = None, video_path: str | None = None) -> None:
+    def setup(
+        self,
+        video_info: VideoInfo,
+        effect_cues: list[EffectCue],
+        *,
+        cache_dir: str | None = None,
+        video_path: str | None = None,
+    ) -> None:
         self._cues = effect_cues
         self._video_info = video_info
 
+        presets_needed = {
+            cue.color_params.preset
+            for cue in effect_cues
+            if cue.color_params and cue.color_params.preset != "custom"
+        }
+
+        for preset in presets_needed:
+            rel_path = LUT_PRESETS.get(preset)
+            if not rel_path:
+                continue
+            lut_path = _LUT_DIR / rel_path
+            try:
+                self._lut_cache[preset] = parse_cube_file(lut_path)
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning("Failed to load LUT for '%s': %s", preset, exc)
+
     def apply_frame(
-        self, frame: np.ndarray, timestamp: float, context: EffectContext
+        self, frame: np.ndarray, timestamp: float, context: EffectContext,
     ) -> np.ndarray:
         active_cues = self.get_active_cues(timestamp)
         if not active_cues:
@@ -41,40 +74,23 @@ class ColorEffect(BaseEffect):
             if params is None:
                 continue
 
-            intensity = params.intensity
-
-            if params.preset == "bw":
-                gray = cv2.cvtColor(result, cv2.COLOR_RGB2GRAY)
-                bw = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
-                result = cv2.addWeighted(result, 1.0 - intensity, bw, intensity, 0)
-            elif params.preset == "sepia":
-                result = self._apply_sepia(result, intensity)
-            elif params.preset == "custom":
-                adjustments = np.array(
-                    [params.r_adjust, params.g_adjust, params.b_adjust],
-                    dtype=np.float32,
-                ) * intensity
+            if params.preset == "custom":
+                adjustments = (
+                    np.array(
+                        [params.r_adjust, params.g_adjust, params.b_adjust],
+                        dtype=np.float32,
+                    )
+                    * params.intensity
+                )
                 result = np.clip(
-                    result.astype(np.float32) + adjustments, 0, 255
+                    result.astype(np.float32) + adjustments, 0, 255,
                 ).astype(np.uint8)
-            else:
-                # Preset lookup
-                adj = COLOR_PRESETS.get(params.preset)
-                if adj:
-                    adjustments = np.array(adj, dtype=np.float32) * intensity
-                    result = np.clip(
-                        result.astype(np.float32) + adjustments, 0, 255
-                    ).astype(np.uint8)
+                continue
+
+            lut = self._lut_cache.get(params.preset)
+            if lut is None:
+                continue
+
+            result = apply_lut3d(result, lut, params.intensity)
 
         return result
-
-    def _apply_sepia(self, frame: np.ndarray, intensity: float) -> np.ndarray:
-        """Apply sepia tone using standard sepia matrix."""
-        sepia_kernel = np.array([
-            [0.393, 0.769, 0.189],  # out_R = 0.393*R + 0.769*G + 0.189*B
-            [0.349, 0.686, 0.168],  # out_G = 0.349*R + 0.686*G + 0.168*B
-            [0.272, 0.534, 0.131],  # out_B = 0.272*R + 0.534*G + 0.131*B
-        ], dtype=np.float32)
-        sepia = cv2.transform(frame, sepia_kernel)
-        sepia = np.clip(sepia, 0, 255).astype(np.uint8)
-        return cv2.addWeighted(frame, 1.0 - intensity, sepia, intensity, 0)

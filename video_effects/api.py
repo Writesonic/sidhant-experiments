@@ -3,6 +3,8 @@
 Run with: uvicorn video_effects.api:app --port 8000
 """
 
+import asyncio
+import json
 import os
 import re
 import uuid
@@ -10,9 +12,10 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from temporalio.client import Client
 from temporalio.common import QueryRejectCondition
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -48,6 +51,64 @@ async def _get_client() -> Client:
             data_converter=pydantic_data_converter,
         )
     return _client
+
+
+# ── POST /api/upload ──
+
+
+@app.post("/api/upload")
+async def upload_video(file: UploadFile) -> dict:
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex[:8]}_{file.filename}"
+    dest = upload_dir / filename
+    with open(dest, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    return {"path": str(dest)}
+
+
+@app.post("/api/upload/init")
+async def upload_init(body: dict[str, Any]) -> dict:
+    """Initialize a chunked upload. Returns an upload_id."""
+    filename = body.get("filename", "video.mp4")
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_id = uuid.uuid4().hex[:12]
+    chunk_dir = upload_dir / f".chunks_{upload_id}"
+    chunk_dir.mkdir()
+    meta = {"filename": f"{upload_id}_{filename}", "total_chunks": body.get("total_chunks", 0)}
+    (chunk_dir / "meta.json").write_text(json.dumps(meta))
+    return {"upload_id": upload_id}
+
+
+@app.post("/api/upload/{upload_id}/chunk/{chunk_index}")
+async def upload_chunk(upload_id: str, chunk_index: int, request: Request) -> dict:
+    """Receive a single chunk as raw bytes."""
+    chunk_dir = Path(settings.TEMP_DIR) / "uploads" / f".chunks_{upload_id}"
+    if not chunk_dir.exists():
+        raise HTTPException(404, "Unknown upload_id")
+    data = await request.body()
+    (chunk_dir / f"{chunk_index:06d}").write_bytes(data)
+    return {"ok": True}
+
+
+@app.post("/api/upload/{upload_id}/complete")
+async def upload_complete(upload_id: str) -> dict:
+    """Assemble chunks into final file."""
+    upload_dir = Path(settings.TEMP_DIR) / "uploads"
+    chunk_dir = upload_dir / f".chunks_{upload_id}"
+    if not chunk_dir.exists():
+        raise HTTPException(404, "Unknown upload_id")
+    meta = json.loads((chunk_dir / "meta.json").read_text())
+    dest = upload_dir / meta["filename"]
+    chunks = sorted(p for p in chunk_dir.iterdir() if p.name != "meta.json")
+    with open(dest, "wb") as out:
+        for chunk_path in chunks:
+            out.write(chunk_path.read_bytes())
+    import shutil
+    shutil.rmtree(chunk_dir)
+    return {"path": str(dest)}
 
 
 # ── POST /api/workflows ──
@@ -154,6 +215,66 @@ async def get_workflow_status(workflow_id: str) -> dict:
         result.setdefault("error", str(e))
 
     return result
+
+
+# ── SSE /api/workflows/{id}/stream ──
+
+
+@app.get("/api/workflows/{workflow_id}/stream")
+async def stream_workflow_status(workflow_id: str, request: Request):
+    """Server-Sent Events stream for workflow progress. Pushes updates only
+    when the step statuses or stage actually change, instead of the client
+    polling every few seconds."""
+
+    client = await _get_client()
+    handle = client.get_workflow_handle(workflow_id)
+
+    async def event_generator():
+        last_snapshot = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                stage = await _query(handle, "get_workflow_stage")
+                result: dict[str, Any] = {"stage": stage}
+
+                try:
+                    result["video_paths"] = await _query(handle, "get_video_paths")
+                except Exception:
+                    pass
+                try:
+                    result["steps"] = await _query(handle, "get_steps")
+                except Exception:
+                    pass
+
+                if stage == "timeline_approval":
+                    result["timeline"] = await _query(handle, "get_timeline")
+                elif stage == "mg_approval":
+                    result["mg_plan"] = await _query(handle, "get_mg_plan")
+                    result["video_info"] = await _query(handle, "get_video_info")
+                elif stage == "done":
+                    wf_result = await handle.result()
+                    result["result"] = wf_result if isinstance(wf_result, dict) else wf_result.model_dump()
+                elif stage == "error":
+                    wf_result = await handle.result()
+                    result["error"] = wf_result.get("error") if isinstance(wf_result, dict) else wf_result.error
+
+                snapshot = json.dumps(result, sort_keys=True, default=str)
+                if snapshot != last_snapshot:
+                    last_snapshot = snapshot
+                    yield {"event": "update", "data": json.dumps(result, default=str)}
+
+                if stage in ("done", "error"):
+                    break
+
+            except Exception as e:
+                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                break
+
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 # ── POST /api/workflows/{id}/signal ──

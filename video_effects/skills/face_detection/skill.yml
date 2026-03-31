@@ -1,0 +1,3 @@
+name: face_detection
+description: Face tracking and spatial context for motion graphics
+queue: video_effects_queue

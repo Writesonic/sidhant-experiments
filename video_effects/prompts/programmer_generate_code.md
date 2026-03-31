@@ -68,7 +68,7 @@ export const {ExportName}: React.FC<{ExportName}Props> = ({
 10. **No async** — everything synchronous
 11. **TypeScript strict** — no `any`, proper types on all variables
 12. **All data via props** — the component receives pre-computed data, not raw transcript
-13. **TRANSPARENT backgrounds** — this component is alpha-composited onto the base video. NEVER use opaque or semi-opaque `backgroundColor` on the root element or any full-size container (no `rgba(0,0,0,0.85)`, no solid fills). The video MUST show through behind your content. Use `drop-shadow` or `textShadow` for contrast against the video instead. Only small inline elements (badges, pills, labels) may have subtle background fills.
+13. **Background rules** — this component is alpha-composited onto the base video. For **in-frame components** (bounds area < 0.5): NEVER use opaque backgrounds on the root container. Use `drop-shadow` or `textShadow` for contrast instead. Only small inline elements (badges, pills, card panels) may have subtle semi-transparent fills (max `rgba(0,0,0,0.6)`). For **full-screen components** (bounds `{x:0, y:0, w:1, h:1}`): you SHOULD use a semi-transparent dark backdrop (`rgba(0,0,0,0.65-0.75)`) so data/text is readable against the dimmed video. Never use fully opaque black.
 14. **FIT within bounds** — `maxWidth` and `maxHeight` from `useFaceAwareLayout` are your canvas size in pixels. NEVER hardcode pixel dimensions larger than these. For SVG charts, use `width={maxWidth} height={maxHeight}` with a fixed `viewBox` so the content scales to fit. For div layouts, use percentage widths or derive sizes from `maxWidth`/`maxHeight`. Content that exceeds the container gets clipped.
 
 ## Animation Patterns

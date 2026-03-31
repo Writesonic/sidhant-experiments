@@ -8,17 +8,15 @@ from pathlib import Path
 
 from temporalio import activity
 
-from video_effects.helpers.face_tracking import detect_faces, smooth_data, _probe_decoded_size
 from video_effects.helpers.llm import call_structured
-from video_effects.helpers.remotion import composite_overlay, render_media, render_still
-from video_effects.helpers.studio import start_studio, stop_studio, update_preview_plan, write_preview_assets
+from video_effects.helpers.remotion import render_media, render_still
+from video_effects.helpers.studio import write_preview_assets
 from video_effects.prompts.motion_graphics_schema import MotionGraphicsPlanResponse
 from video_effects.helpers.templates import render_template_section
 from video_effects.schemas.mg_templates import (
     MGTemplateSpec,
     MG_TEMPLATE_REGISTRY,
     get_available_templates,
-    load_guidance,
 )
 from video_effects.schemas import template_library
 from video_effects.schemas.motion_graphics import (
@@ -204,88 +202,6 @@ def _validate_props(
 
     return validated, issues
 
-
-# ---------------------------------------------------------------------------
-# Face detection (runs before G8a so face cache exists)
-# ---------------------------------------------------------------------------
-
-
-@activity.defn(name="vfx_detect_faces")
-def detect_faces_activity(input_data: dict) -> dict:
-    """Run full-video face detection and write cache for downstream activities.
-
-    Input: {
-        "video_path": str,
-        "video_info": dict,
-        "cache_dir": str,
-    }
-    Output: {
-        "face_data_path": str,
-        "frames_detected": int,
-        "from_cache": bool,
-    }
-    """
-    video_path = input_data["video_path"]
-    video_info = input_data["video_info"]
-    cache_dir = input_data["cache_dir"]
-
-    fps = video_info.get("fps", 30)
-    duration = video_info.get("duration", 0)
-    total_frames = video_info.get("total_frames", 0) or int(duration * fps)
-
-    os.makedirs(cache_dir, exist_ok=True)
-    face_data_path = os.path.join(cache_dir, "face_tracking_zoom.json")
-
-    # Check for existing valid cache (dimensions must match)
-    if os.path.exists(face_data_path):
-        try:
-            with open(face_data_path) as f:
-                raw = json.load(f)
-            cached_data = raw.get("face_data", raw) if isinstance(raw, dict) else raw
-            cached_dims = raw.get("dimensions") if isinstance(raw, dict) else None
-            decoded_w, decoded_h = _probe_decoded_size(video_path)
-
-            if (cached_dims
-                    and cached_dims.get("width") == decoded_w
-                    and cached_dims.get("height") == decoded_h
-                    and len(cached_data) >= total_frames):
-                logger.info("Face detection cache valid: %d frames", len(cached_data))
-                return {
-                    "face_data_path": face_data_path,
-                    "frames_detected": len(cached_data),
-                    "from_cache": True,
-                }
-        except (json.JSONDecodeError, KeyError):
-            logger.warning("Invalid face cache, re-detecting")
-
-    activity.heartbeat("Starting full-video face detection")
-
-    face_data = detect_faces(
-        video_path=video_path,
-        active_ranges=[(0, total_frames - 1)],
-        total_frames=total_frames,
-    )
-
-    activity.heartbeat("Smoothing face data")
-
-    smoothed = smooth_data(face_data)
-    smoothed_list = [tuple(int(v) for v in row) for row in smoothed]
-
-    decoded_w, decoded_h = _probe_decoded_size(video_path)
-    cache_payload = {
-        "face_data": smoothed_list,
-        "dimensions": {"width": decoded_w, "height": decoded_h},
-    }
-
-    with open(face_data_path, "w") as f:
-        json.dump(cache_payload, f)
-
-    logger.info("Face detection complete: %d frames written to %s", len(smoothed_list), face_data_path)
-    return {
-        "face_data_path": face_data_path,
-        "frames_detected": len(smoothed_list),
-        "from_cache": False,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -777,10 +693,27 @@ def _resolve_all_conflicts(
             })
             continue
 
-        # Full-screen components (area > 0.8) — skip spatial conflict resolution entirely.
-        # These are atmospheric effects (color flash, text card, letterbox) that intentionally
-        # cover most/all of the screen and should not be relocated or blocked by face windows.
+        # Full-screen components (area > 0.8) — skip spatial relocation but resolve
+        # temporal overlaps with other full-screen components by trimming the later one.
         if bw * bh > 0.8:
+            for p in placed:
+                if p.get("w", 0) * p.get("h", 0) <= 0.8:
+                    continue
+                if comp["start_time"] < p["end_time"] and p["start_time"] < comp["end_time"]:
+                    # Temporal overlap between two full-screen components — trim this one
+                    if comp["start_time"] < p["start_time"]:
+                        comp["end_time"] = p["start_time"]
+                    else:
+                        comp["start_time"] = p["end_time"]
+                    if comp["end_time"] <= comp["start_time"]:
+                        comp["end_time"] = comp["start_time"] + 0.1
+                    issues.append(f"Trimmed full-screen '{tpl}' to avoid overlap with another full-screen component")
+                    changed = True
+            placed.append({
+                "x": bounds.get("x", 0), "y": bounds.get("y", 0),
+                "w": bw, "h": bh,
+                "start_time": comp["start_time"], "end_time": comp["end_time"],
+            })
             continue
 
         # Build obstacles: padded face rects + already-placed component rects + static obstacles
@@ -1140,6 +1073,26 @@ def render_motion_overlay(input_data: dict) -> dict:
     plan["width"] = width
     plan["height"] = height
 
+    # Copy face/zoom data into remotion/public/_preview/ so Remotion's
+    # bundler can serve them — DynamicComposition fetches these via HTTP.
+    from video_effects.helpers.remotion import _get_remotion_dir
+    preview_dir = _get_remotion_dir() / "public" / "_preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    face_path = plan.get("faceDataPath", "")
+    if face_path and os.path.exists(face_path):
+        import shutil
+        dst = preview_dir / "face_data.json"
+        shutil.copy2(face_path, dst)
+        plan["faceDataPath"] = "/_preview/face_data.json"
+
+    zoom_path = plan.get("zoomStatePath", "")
+    if zoom_path and os.path.exists(zoom_path):
+        import shutil
+        dst = preview_dir / "zoom_state.json"
+        shutil.copy2(zoom_path, dst)
+        plan["zoomStatePath"] = "/_preview/zoom_state.json"
+
     num_components = len(plan.get("components", []))
     if num_components == 0:
         logger.info("No motion graphics components in plan, skipping render")
@@ -1161,48 +1114,6 @@ def render_motion_overlay(input_data: dict) -> dict:
         "overlay_path": overlay_path,
         "components_rendered": num_components,
     }
-
-
-@activity.defn(name="vfx_composite_motion_graphics")
-def composite_motion_graphics(input_data: dict) -> dict:
-    """Composite transparent overlay onto base video.
-
-    If base_video == output_path (FFmpeg can't overwrite its input),
-    writes to a temp file first then renames.
-
-    Input: {
-        "base_video": str,      # path to base_with_audio.mp4 (G7 output)
-        "overlay_video": str,   # path to overlay.mov (G8e output)
-        "output_path": str,     # final output path
-        "temp_dir": str,        # temp directory for intermediate files
-    }
-    Output: {"output_video": str}
-    """
-    import shutil
-
-    base_video = input_data["base_video"]
-    overlay_video = input_data["overlay_video"]
-    output_path = input_data["output_path"]
-    temp_dir = input_data.get("temp_dir", os.path.dirname(output_path))
-
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-    # FFmpeg can't write to the same file it reads — use temp path if needed
-    same_file = os.path.abspath(base_video) == os.path.abspath(output_path)
-    actual_output = os.path.join(temp_dir, "mg_composited.mp4") if same_file else output_path
-
-    activity.heartbeat("Compositing motion graphics overlay")
-
-    composite_overlay(
-        base_video=base_video,
-        overlay_video=overlay_video,
-        output_path=actual_output,
-    )
-
-    if same_file:
-        shutil.move(actual_output, output_path)
-
-    return {"output_video": output_path}
 
 
 @activity.defn(name="vfx_preview_motion_graphics")
@@ -1266,7 +1177,7 @@ def preview_motion_graphics(input_data: dict) -> dict:
 
 @activity.defn(name="vfx_render_preview_clip")
 def render_preview_clip(input_data: dict) -> dict:
-    """Render full StudioPreview as H264 MP4 at reduced resolution for inline playback.
+    """Render MotionOverlay with base video as H264 MP4 for inline preview.
 
     Input: {
         "composition_plan": dict,
@@ -1287,15 +1198,50 @@ def render_preview_clip(input_data: dict) -> dict:
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Preview assets already written by vfx_preview_motion_graphics (runs first)
+    write_preview_assets(
+        mg_plan=plan,
+        base_video_path=base_video,
+        face_data_path=face_data_path,
+        zoom_state_path=zoom_state_path,
+        video_info=video_info,
+    )
+
+    fps = video_info.get("fps", 30)
+    src_w = int(video_info.get("width", 1920))
+    src_h = int(video_info.get("height", 1080))
+    total_frames = video_info.get("total_frames") or int(video_info.get("duration", 10) * fps)
+
+    # Render at reduced resolution + capped fps for speed — preview only
+    scale = 2 if src_w > 1280 else 1
+    width = src_w // scale
+    height = src_h // scale
+    preview_fps = min(int(fps), 30)
+    preview_frames = int(total_frames * preview_fps / fps)
+
+    props = {
+        **plan,
+        "includeBaseVideo": True,
+        "baseVideoPath": "/_preview/base.mp4",
+        "faceDataPath": "/_preview/face_data.json" if face_data_path and os.path.exists(face_data_path) else "",
+        "zoomStatePath": "/_preview/zoom_state.json" if zoom_state_path and os.path.exists(zoom_state_path) else "",
+        "durationInFrames": preview_frames,
+        "fps": preview_fps,
+        "width": width,
+        "height": height,
+    }
+
     clip_path = os.path.join(output_dir, "preview_clip.mp4")
+    activity.heartbeat("Rendering preview clip")
     render_media(
-        composition_id="StudioPreview",
-        props={},
+        composition_id="MotionOverlay",
+        props=props,
         output_path=clip_path,
         codec="h264",
-        width=960,
-        height=540,
+        width=width,
+        height=height,
+        fps=preview_fps,
+        duration_in_frames=preview_frames,
+        timeout=1800,
     )
 
     return {"clip_path": clip_path}
@@ -1333,48 +1279,3 @@ def edit_mg_plan(input_data: dict) -> dict:
     return result
 
 
-@activity.defn(name="vfx_start_studio")
-def start_studio_activity(input_data: dict) -> dict:
-    """Write preview assets and start Remotion Studio.
-
-    Input: {
-        "mg_plan": dict,
-        "base_video_path": str,
-        "face_data_path": str,
-        "zoom_state_path": str,
-        "video_info": dict,
-    }
-    Output: {"studio_url": str, "pid": int, "port": int}
-    """
-    from video_effects.config import settings
-
-    write_preview_assets(
-        mg_plan=input_data["mg_plan"],
-        base_video_path=input_data.get("base_video_path", ""),
-        face_data_path=input_data.get("face_data_path", ""),
-        zoom_state_path=input_data.get("zoom_state_path", ""),
-        video_info=input_data.get("video_info", {}),
-    )
-    return start_studio(port=settings.REMOTION_STUDIO_PORT)
-
-
-@activity.defn(name="vfx_stop_studio")
-def stop_studio_activity(input_data: dict) -> dict:
-    """Stop Remotion Studio process and clean up preview assets.
-
-    Input: {"pid": int}
-    Output: {"stopped": True}
-    """
-    stop_studio(input_data["pid"])
-    return {"stopped": True}
-
-
-@activity.defn(name="vfx_update_studio_preview")
-def update_studio_preview_activity(input_data: dict) -> dict:
-    """Update preview plan.json for Studio hot-reload.
-
-    Input: {"mg_plan": dict, "video_info": dict}
-    Output: {"updated": True}
-    """
-    update_preview_plan(input_data["mg_plan"], input_data.get("video_info", {}))
-    return {"updated": True}

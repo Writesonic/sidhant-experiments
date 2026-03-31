@@ -1,0 +1,9 @@
+app/node_modules
+app/.next
+remotion/node_modules
+__pycache__
+**/__pycache__
+*.pyc
+.DS_Store
+*.mp4
+*.mov

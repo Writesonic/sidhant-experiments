@@ -78,6 +78,43 @@ export async function signalWorkflow(
   if (!res.ok) throw new Error(await res.text());
 }
 
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
+export async function uploadVideo(
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<{ path: string }> {
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  // Init
+  const initRes = await fetch(`${API_BASE}/api/upload/init`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, total_chunks: totalChunks }),
+  });
+  if (!initRes.ok) throw new Error(await initRes.text());
+  const { upload_id } = await initRes.json();
+
+  // Send chunks
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const chunk = file.slice(start, start + CHUNK_SIZE);
+    const res = await fetch(`${API_BASE}/api/upload/${upload_id}/chunk/${i}`, {
+      method: "POST",
+      body: chunk,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    onProgress?.(Math.round(((i + 1) / totalChunks) * 100));
+  }
+
+  // Complete
+  const completeRes = await fetch(`${API_BASE}/api/upload/${upload_id}/complete`, {
+    method: "POST",
+  });
+  if (!completeRes.ok) throw new Error(await completeRes.text());
+  return completeRes.json();
+}
+
 export function fileUrl(path: string): string {
   return `${API_BASE}/api/files?path=${encodeURIComponent(path)}`;
 }

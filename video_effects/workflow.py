@@ -404,19 +404,8 @@ class VideoEffectsWorkflow:
                 id=f"{wid}/infographic-gen",
             )
 
-        # ── G6b: Setup processors (face tracking, etc.) ──
+        # ── G6b: Render video frames (Modal GPU) ──
         self._step_start("apply_effects")
-        await workflow.execute_activity(
-            "vfx_setup_processors",
-            {
-                "video_path": video_path, "effects": effects,
-                "video_info": video_info, "cache_dir": temp_dir, # TODO: there's probably a better way to do this. temp dir thing. This doesn't feel right.
-            },
-            start_to_close_timeout=activity_timeout,
-            heartbeat_timeout=timedelta(minutes=5),
-        )
-
-        # ── G6c: Render video frames ──
         render_task = workflow.execute_activity(
             "vfx_render_video",
             {
@@ -425,7 +414,7 @@ class VideoEffectsWorkflow:
                 "render_plan": render_plan, "cache_dir": temp_dir,
             },
             start_to_close_timeout=long_timeout,
-            heartbeat_timeout=timedelta(minutes=2),
+            heartbeat_timeout=timedelta(minutes=5),
         )
 
         if code_generation_task is not None:
@@ -679,10 +668,13 @@ class VideoEffectsWorkflow:
             # Only gate if there are non-subtitle components worth reviewing
             has_reviewable = any(c.get("template") != "subtitles" for c in mg_plan["components"])
             if has_reviewable:
+                # Read generated TSX sources for browser-side compilation
+                sources_result = await workflow.execute_activity(
+                    "vfx_read_component_sources", {},
+                    start_to_close_timeout=timedelta(seconds=10),
+                )
+                mg_plan["component_sources"] = sources_result.get("sources", {})
                 self._mg_plan_data = mg_plan
-
-                # No CLI preview rendering — the Next.js app uses @remotion/player
-                # to preview directly in the browser via the get_video_paths query.
 
                 if not input.auto_approve:
                     self._workflow_stage = "mg_approval"

@@ -65,6 +65,7 @@ def render_media(
     codec: str = "prores",
     prores_profile: str = "4444",
     concurrency: int | None = None,
+    timeout: int = 600,
 ) -> str:
     """Render video via npx remotion render with transparent ProRes 4444."""
     remotion_dir = _get_remotion_dir()
@@ -99,7 +100,7 @@ def render_media(
         cwd=str(remotion_dir),
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=timeout,
     )
 
     if result.returncode != 0:

@@ -34,6 +34,7 @@ python -m video_effects.cli run input.mp4 -o output.mp4 --mg --auto-approve --st
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System overview, pipeline stages, end-to-end data flow |
+| [Concurrency & Deployment](concurrency-and-deployment.md) | Threading model, heartbeat mechanics, Porter K8s + Modal GPU deployment |
 | [Effects Pipeline](effects-pipeline.md) | OpenCV frame processing: phase ordering, each effect's internals, encoder settings |
 | [Motion Graphics](motion-graphics.md) | Remotion MG system: LLM planning, spatial validation, ProRes rendering, FFmpeg compositing |
 | [Infographics](infographics.md) | Code-gen pipeline: plan → generate TSX → validate → registry → fallback |
@@ -47,127 +48,141 @@ python -m video_effects.cli run input.mp4 -o output.mp4 --mg --auto-approve --st
 
 ```
 video_effects/
-├── cli.py                      # CLI entry point
-├── api.py                      # FastAPI proxy for web UI
-├── worker.py                   # Temporal worker
-├── config.py                   # Settings (VFX_ env vars)
-├── workflow.py                 # Main VideoEffectsWorkflow
-├── creative_workflow.py        # Style auto-detection child workflow
-├── infographic_workflow.py     # Code-gen child workflow
-├── programmer_workflow.py     # Free-hand creative programmer child workflow
-├── effect_registry.py          # Phase ordering & effect type → processor map
+├── cli.py                         # CLI entry point
+├── api.py                         # FastAPI proxy for web UI
+├── worker.py                      # Temporal worker (skill discovery, ThreadPoolExecutor)
+├── config.py                      # Settings (VFX_ env vars, RUNTIME_MODE)
+├── workflow.py                    # Main VideoEffectsWorkflow
+├── creative_workflow.py           # Style auto-detection child workflow
+├── infographic_workflow.py        # Code-gen child workflow
+├── programmer_workflow.py         # Free-hand creative programmer child workflow
+├── effect_registry.py             # Phase ordering & effect type → processor map
+│
+├── core/                          # Skill-capability abstractions (zero Temporal imports)
+│   ├── base/
+│   │   ├── capability.py          # BaseCapability[TRequest, TResponse], MockProgressReporter
+│   │   └── context.py             # ExecutionContext (frozen dataclass), create_test_context()
+│   └── interfaces/
+│       └── progress.py            # ProgressReporter protocol, ProgressReport, EventType
+│
+├── infrastructure/                # Runtime provider layer
+│   ├── provider.py                # run_capability / run_capability_sync, mode switching
+│   ├── temporal/
+│   │   └── implementations.py     # TemporalContextProvider, TemporalProgressReporter, wrap_as_temporal_activity
+│   └── testing/
+│       └── implementations.py     # TestContextProvider, RecordingProgressReporter
+│
+├── skills/                        # Each skill: activities.py + capabilities/ + schemas.py + skill.yml
+│   ├── discovery.py               # Scans for skill.yml, dynamic import of activities
+│   ├── registry.py                # @register_activity decorator, queue routing
+│   ├── video_extraction/          # Video metadata extraction
+│   ├── transcription/             # Audio transcription (ElevenLabs / Whisper)
+│   ├── creative/                  # Style design activity
+│   ├── effect_planning/           # LLM effect cue parsing + timeline validation
+│   ├── face_detection/            # Face detection + Remotion spatial context
+│   ├── mg_planning/               # MG planning, template placement
+│   ├── rendering/                 # Single-pass OpenCV frame pipeline
+│   ├── composition/               # FFmpeg compositing + audio mux
+│   ├── studio/                    # Remotion Studio lifecycle
+│   ├── infographic/               # Infographic code generation & validation
+│   └── programmer/                # Programmer brainstorm, critique, code-gen
+│
 ├── activities/
-│   ├── apply_effects.py        # Single-pass frame pipeline
-│   ├── parse_cues.py           # LLM effect cue parsing
-│   ├── creative.py             # Style design activity
-│   ├── remotion.py             # MG planning, spatial context, rendering
-│   ├── infographic.py          # Infographic code generation & validation
-│   ├── programmer.py          # Programmer brainstorm, critique, code-gen & template placement
-│   ├── compose.py              # Final audio mux
-│   ├── transcribe.py           # Audio transcription
-│   └── video_info.py           # Video metadata extraction
-├── effects/
-│   ├── base.py                 # BaseEffect ABC
-│   ├── zoom.py                 # Face-tracked zoom with easing
-│   ├── blur.py                 # Gaussian, face pixelate, background, radial
-│   ├── color.py                # Color grading presets
-│   ├── whip.py                 # Whip transition
-│   ├── vignette.py             # Cinematic vignette
-│   └── speed_ramp.py           # Visual speed effect
-├── helpers/
-│   ├── llm.py                  # Anthropic API wrapper (call_structured, call_text)
-│   ├── face_tracking.py        # MediaPipe face detection pipeline
-│   ├── remotion.py             # Remotion render + FFmpeg composite helpers
-│   ├── templates.py           # Shared template metadata renderer (render_template_section)
-│   └── studio.py              # Remotion Studio process lifecycle management
-├── schemas/
-│   ├── effects.py              # EffectCue, EffectType, VideoInfo, effect params
-│   ├── styles.py               # StylePreset, StyleConfig, FontWeights
-│   ├── mg_templates.py         # MG template registry & specs
-│   ├── motion_graphics.py      # MotionGraphicsComponent, Plan
-│   ├── programmer.py          # ProgrammerComponentSpec, TemplatePlacement models
-│   ├── template_library.py    # User-created library template CRUD + conversion
-│   ├── infographic.py          # InfographicSpec, InfographicType, fallback map
-│   └── workflow.py             # VideoEffectsInput/Output
-├── prompts/
-│   ├── parse_effect_cues.md    # Effect cue inference prompt
-│   ├── parse_effect_cues_dev.md # Dev mode (explicit verbal cues)
-│   ├── design_style.md         # Style auto-detection prompt
-│   ├── plan_motion_graphics_base.md  # MG planning prompt
-│   ├── plan_infographics.md    # Infographic planning prompt
-│   ├── plan_diagrams.md        # Diagram planning prompt
-│   ├── plan_timelines.md       # Timeline planning prompt
-│   ├── plan_quotes.md          # Quote/callout planning prompt
-│   ├── plan_code_blocks.md     # Code block planning prompt
-│   ├── plan_comparisons.md     # Comparison planning prompt
-│   ├── programmer_brainstorm.md    # Programmer creative brainstorm prompt
-│   ├── programmer_critique.md      # Programmer self-critique prompt
-│   ├── programmer_generate_code.md # Programmer TSX code gen prompt
-│   ├── place_library_templates.md  # Context-aware library template placement prompt
-│   ├── summarize_transcript.md     # Transcript summarization prompt
-│   ├── edit_mg_plan.md             # MG plan editing on rejection feedback
-│   ├── generate_template.md        # LLM-driven template code generation
-│   ├── generate_infographic_code.md  # TSX code generation prompt
-│   ├── infographic_api_reference.md  # Allowed imports for generated code
-│   ├── schema.py               # ParsedEffectCues response model
-│   ├── motion_graphics_schema.py # MG plan response model
-│   └── mg_guidance/            # Per-template creative guidance
-│       ├── animated_title.md
-│       ├── lower_third.md
-│       ├── listicle.md
-│       └── data_animation.md
-├── app/                        # Next.js web UI (preview + approval)
-│   ├── package.json            # Next.js 16 + @remotion/player 4.0.242
-│   ├── next.config.ts          # Webpack + Turbopack alias: @remotion-project → ../remotion/src
+│   ├── __init__.py                # Discovery shim (load_all_skills → ALL_VIDEO_EFFECTS_ACTIVITIES)
+│   └── remotion.py                # Legacy MG helpers (shared across mg_planning/face_detection)
+│
+├── effects/                       # OpenCV frame processors
+│   ├── base.py                    # BaseEffect ABC
+│   ├── zoom.py                    # Face-tracked zoom with easing
+│   ├── blur.py                    # Gaussian, face pixelate, background, radial
+│   ├── color.py                   # Color grading presets
+│   ├── whip.py                    # Whip transition
+│   ├── vignette.py                # Cinematic vignette
+│   └── speed_ramp.py              # Visual speed effect
+│
+├── helpers/                       # Shared utilities (no Temporal imports)
+│   ├── llm.py                     # Anthropic API wrapper (call_structured, call_text)
+│   ├── face_tracking.py           # MediaPipe face detection pipeline
+│   ├── remotion.py                # Remotion render + FFmpeg composite helpers
+│   ├── templates.py               # Shared template metadata renderer
+│   ├── studio.py                  # Remotion Studio process lifecycle management
+│   ├── prompts.py                 # Shared prompt builders (style guide, spatial message, etc.)
+│   └── effects.py                 # Effect validation utilities (validate_zoom_pairs)
+│
+├── schemas/                       # Pydantic models
+│   ├── effects.py                 # EffectCue, EffectType, VideoInfo, effect params
+│   ├── styles.py                  # StylePreset, StyleConfig, FontWeights
+│   ├── mg_templates.py            # MG template registry & specs
+│   ├── motion_graphics.py         # MotionGraphicsComponent, Plan
+│   ├── programmer.py              # ProgrammerComponentSpec, TemplatePlacement models
+│   ├── template_library.py        # User-created library template CRUD + conversion
+│   ├── infographic.py             # InfographicSpec, InfographicType, fallback map
+│   └── workflow.py                # VideoEffectsInput/Output
+│
+├── prompts/                       # LLM prompt templates
+│   ├── parse_effect_cues.md
+│   ├── parse_effect_cues_dev.md
+│   ├── design_style.md
+│   ├── plan_motion_graphics_base.md
+│   ├── plan_infographics.md
+│   ├── plan_diagrams.md
+│   ├── plan_timelines.md
+│   ├── plan_quotes.md
+│   ├── plan_code_blocks.md
+│   ├── plan_comparisons.md
+│   ├── programmer_brainstorm.md
+│   ├── programmer_critique.md
+│   ├── programmer_generate_code.md
+│   ├── place_library_templates.md
+│   ├── summarize_transcript.md
+│   ├── edit_mg_plan.md
+│   ├── generate_template.md
+│   ├── generate_infographic_code.md
+│   ├── infographic_api_reference.md
+│   ├── schema.py
+│   ├── motion_graphics_schema.py
+│   └── mg_guidance/
+│
+├── app/                           # Next.js web UI (preview + approval)
+│   ├── package.json               # Next.js 16 + @remotion/player 4.0.242
+│   ├── next.config.ts
 │   └── src/
 │       ├── app/
-│       │   ├── layout.tsx      # Root layout
-│       │   ├── page.tsx        # Landing page (start workflow form)
-│       │   ├── workflow/[id]/
-│       │   │   └── page.tsx    # Stage-aware workflow viewer
+│       │   ├── layout.tsx
+│       │   ├── page.tsx
+│       │   ├── workflow/[id]/page.tsx
 │       │   └── templates/
-│       │       ├── page.tsx        # Template library browser
-│       │       ├── create/
-│       │       │   └── page.tsx    # Create new template
-│       │       └── [id]/
-│       │           └── page.tsx    # Edit template
 │       ├── components/
-│       │   ├── VideoPlayer.tsx     # @remotion/player wrapper
-│       │   ├── TimelineApproval.tsx # Effects timeline + approve/reject
-│       │   ├── MgApproval.tsx      # Player preview + component cards
-│       │   ├── FeedbackDialog.tsx  # Rejection feedback modal
-│       │   ├── DynamicCodeComp.tsx # Live code component renderer
-│       │   ├── NavLink.tsx        # Navigation link component
-│       │   ├── TemplateEditor.tsx # Template editing UI
-│       │   └── ui.tsx             # Shared UI primitives
 │       ├── hooks/
-│       │   ├── useWorkflow.ts      # Polls /api/workflows/{id}
-│       │   └── useTemplateEditor.ts # Template editor state management
 │       └── lib/
-│           ├── api.ts          # Typed fetch wrappers for Python API
-│           └── compiler.ts     # TypeScript compilation utilities
-└── remotion/                   # TypeScript/React Remotion project
-    ├── package.json            # Remotion 4.0.242 + React 18
-    └── src/
-        ├── Root.tsx            # Composition registration
-        ├── DynamicComposition.tsx  # Runtime composition engine
-        ├── types.ts            # All TypeScript interfaces
-        ├── components/
-        │   ├── index.ts        # ComponentRegistry
-        │   ├── AnimatedTitle.tsx
-        │   ├── LowerThird.tsx
-        │   ├── Listicle.tsx
-        │   ├── DataAnimation.tsx
-        │   ├── Subtitles.tsx
-        │   └── generated/      # LLM-generated infographic components
-        │       └── _registry.ts
-        └── lib/
-            ├── spatial.ts      # useFaceAwareLayout, zoom compensation
-            ├── styles.ts       # StyleProvider, useStyle
-            ├── context.ts      # FaceDataProvider, useFaceFrame
-            ├── zoom-context.ts # ZoomDataProvider, useZoomFrame
-            ├── easing.ts       # Spring configs (GENTLE, BOUNCY, SNAPPY, SMOOTH, ELASTIC, WOBBLY)
-            ├── fonts.ts        # Google Fonts loader
-            ├── infographic-utils.ts  # SVG math helpers
-            └── component-utils.ts    # Diagram, timeline, code block utilities
+│
+├── remotion/                      # TypeScript/React Remotion project
+│   ├── package.json               # Remotion 4.0.242 + React 18
+│   └── src/
+│       ├── Root.tsx
+│       ├── DynamicComposition.tsx
+│       ├── types.ts
+│       ├── components/
+│       │   └── generated/
+│       └── lib/
+│           ├── spatial.ts         # useFaceAwareLayout, zoom compensation
+│           ├── styles.ts          # StyleProvider, useStyle
+│           ├── context.ts         # FaceDataProvider, useFaceFrame
+│           ├── zoom-context.ts    # ZoomDataProvider, useZoomFrame
+│           ├── easing.ts          # Spring configs
+│           ├── fonts.ts           # Google Fonts loader
+│           ├── infographic-utils.ts
+│           └── component-utils.ts
+│
+└── docs/
+    ├── architecture.md
+    ├── concurrency-and-deployment.md
+    ├── effects-pipeline.md
+    ├── face-tracking.md
+    ├── motion-graphics.md
+    ├── infographics.md
+    ├── remotion-components.md
+    ├── styles.md
+    ├── llm-prompts.md
+    └── cli-and-config.md
 ```
